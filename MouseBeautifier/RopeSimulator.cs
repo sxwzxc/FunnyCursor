@@ -43,29 +43,54 @@ namespace MouseBeautifier
             if (s.RopeSegments != _n || _pos.Length == 0)
                 ApplySettings(s);
 
+            // Sub-step the integration so a frame stutter can't launch the rope.
+            // Each sub-step is at most ~1/120s; a 50ms frame → 6 sub-steps.
+            const double maxStep = 1.0 / 120.0;
+            int substeps = Math.Max(1, (int)Math.Ceiling(dt / maxStep));
+            substeps = Math.Min(substeps, 8); // cap to avoid perf cliff
+            double h = dt / substeps;
+
+            // Interpolate the anchor across sub-steps so the top of the rope
+            // follows the cursor smoothly instead of snapping per frame.
+            Vector2 startAnchor = _pos[0];
+
+            for (int step = 0; step < substeps; step++)
+            {
+                float t = (step + 1f) / substeps;
+                Vector2 a = Vector2.Lerp(startAnchor, anchor, t);
+                IntegrateStep(h, a);
+            }
+        }
+
+        private void IntegrateStep(double h, Vector2 anchor)
+        {
             // Pin anchor (top of rope = cursor).
             _pos[0] = anchor;
             _prev[0] = anchor;
 
-            // Clamp dt so a stutter (e.g. window dragging) can't launch the rope
-            // across the screen in a single Verlet step.
-            double simDt = Math.Min(dt, 1.0 / 60.0);
+            float g = _gravity * (float)(h * h);
+            float damp = MathF.Pow(_damping, (float)(h * 60f));
 
-            float g = _gravity * (float)(simDt * simDt);
-            float damp = MathF.Pow(_damping, (float)(simDt * 60f));
+            // Cap how fast any point may move per step (in px/step). Without this
+            // a violent cursor jerk propagates huge velocities down the chain and
+            // the constraint solver can't recover, making the bob "fly off".
+            const float maxStepLen = 60f;
 
             for (int i = 1; i <= _n; i++)
             {
                 var cur = _pos[i];
                 var vel = (_pos[i] - _prev[i]) * damp;
+
+                float vl = vel.Length();
+                if (vl > maxStepLen)
+                    vel *= maxStepLen / vl;
+
                 var next = cur + vel + new Vector2(0, g);
                 _prev[i] = cur;
                 _pos[i] = next;
             }
 
             // Distance constraints (iterate; more iterations => stiffer rope).
-            // Use enough iterations to keep the rope from stretching past its
-            // natural length even when the cursor is whipped around quickly.
             int iters = 16 + (int)(_stiffness * 32);
             for (int k = 0; k < iters; k++)
             {
@@ -94,8 +119,7 @@ namespace MouseBeautifier
             }
 
             // Safety clamp: never let any point wander more than the rope's total
-            // length from the anchor. This catches the rare case where a huge dt
-            // spike outran the constraint solver and the bob "flies off".
+            // length from the anchor.
             float maxDist = _n * _segLen * 1.05f;
             for (int i = 1; i <= _n; i++)
             {
