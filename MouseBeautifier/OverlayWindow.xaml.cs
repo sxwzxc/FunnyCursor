@@ -63,15 +63,15 @@ namespace MouseBeautifier
 
             ApplyWindowStyles();
 
-            // Make the window background show the desktop through (blurred) via a
-            // DWM accent. This is the reliable way to get a see-through WinUI 3 /
-            // Win2D overlay: BLURBEHIND composites the windows behind the overlay,
-            // and the Win2D swap chain's per-pixel-alpha content (transparent
-            // ClearColor set in the ctor) draws the effects on top of that.
+            // Make the window background fully transparent (crisp, no blur) so the
+            // desktop and any windows behind show through with zero obscuring.
+            // ACCENT_ENABLE_TRANSPARENTGRADIENT with nColor=0 gives a completely
+            // transparent surface; the Win2D swap chain's per-pixel-alpha content
+            // (transparent ClearColor set in the ctor) then draws only the effects
+            // on top — nothing else is painted over the screen.
             //
-            // Without this accent the WinUI 3 window is an OPAQUE redirection
-            // surface, so the transparent Win2D swap chain is composited over an
-            // opaque black backing and the whole screen shows solid black.
+            // (BLURBEHIND would blur the desktop behind; we deliberately avoid it
+            // because the user wants the content behind to stay perfectly clear.)
             ApplyTransparency();
 
             PositionFullScreen();
@@ -107,16 +107,16 @@ namespace MouseBeautifier
         }
 
         /// <summary>
-        /// Applies a DWM "blur behind" accent so the windows beneath the overlay
-        /// show through. This is what makes the overlay transparent instead of a
-        /// solid black surface. The Win2D effects (transparent ClearColor) then
-        /// render on top of the blurred desktop.
+        /// Applies a DWM transparent-gradient accent (nColor=0 → fully transparent)
+        /// so the windows beneath the overlay show through crisply with no blur.
+        /// This is what makes the overlay transparent instead of a solid black
+        /// surface. The Win2D effects (transparent ClearColor) then render on top.
         /// </summary>
         private void ApplyTransparency()
         {
             var accent = new NativeMethods.ACCENTPOLICY
             {
-                nAccentState = NativeMethods.ACCENT_ENABLE_BLURBEHIND,
+                nAccentState = NativeMethods.ACCENT_ENABLE_TRANSPARENTGRADIENT,
                 nFlags = 0,
                 nColor = 0,
                 nAnimationId = 0,
