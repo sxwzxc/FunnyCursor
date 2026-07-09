@@ -31,8 +31,6 @@ namespace MouseBeautifier
         private double _scale = 1;
 
         // orientation / animation state
-        private Vector2 _lastCursor;
-        private float _lean;
         private double _animTime;
         private float _orbitAngle;
 
@@ -110,11 +108,6 @@ namespace MouseBeautifier
         {
             var s = SettingsManager.Current;
 
-            // Track cursor velocity (DIP/s) for the auto-orientation lean.
-            var vel = dt > 1e-6 ? (cursor - _lastCursor) / (float)dt : Vector2.Zero;
-            _lastCursor = cursor;
-            float targetLean = Math.Clamp(vel.X * 0.015f, -30f, 30f);
-            _lean += (targetLean - _lean) * (float)Math.Min(1, dt * 8);
             _animTime += dt;
             if (s.EnableOrbit) _orbitAngle = (_orbitAngle + (float)(s.OrbitSpeed * dt)) % 360f;
 
@@ -201,21 +194,31 @@ namespace MouseBeautifier
             if (pts.Length < 2) return;
 
             var col = ColorsUtil.Parse(s.RopeColor);
+
+            // Draw the rope with round caps + round joins so segment joints stay
+            // smooth. Previously each segment was a separate DrawLine with default
+            // butt caps, so the rope looked "broken into pieces" when it bent.
+            using var stroke = new CanvasStrokeStyle
+            {
+                LineJoin = CanvasLineJoin.Round,
+                StartCap = CanvasCapStyle.Round,
+                EndCap = CanvasCapStyle.Round,
+            };
             for (int pass = 0; pass < 3; pass++)
             {
                 float w = (float)s.RopeWidth * (3 - pass);
                 var c = col; c.A = (byte)(50 * (3 - pass));
                 for (int i = 0; i < pts.Length - 1; i++)
-                    session.DrawLine(pts[i].X, pts[i].Y, pts[i + 1].X, pts[i + 1].Y, c, w);
+                    session.DrawLine(pts[i], pts[i + 1], c, w, stroke);
             }
 
             var bob = _rope.Bob;
 
-            // Orientation: rope swing angle (0° when hanging straight down) + a
-            // velocity-driven lean, so the pendant auto-adjusts toward mouse motion.
+            // The pendant rotates to match the rope's LAST segment direction exactly,
+            // so it always looks tied to the end of the rope (no independent lean
+            // that would make it appear detached).
             var dir = pts[^1] - pts[^2];
-            double swing = Math.Atan2(dir.X, dir.Y) * 180 / Math.PI;
-            double finalAngle = Math.Clamp(swing + _lean, -85, 85);
+            double finalAngle = Math.Atan2(dir.X, dir.Y) * 180 / Math.PI;
 
             var icon = GetImageIcon(s.IconType);
             // SVG is unsupported by the layered overlay, so any SVG custom icon
