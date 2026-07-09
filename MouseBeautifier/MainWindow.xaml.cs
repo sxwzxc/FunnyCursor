@@ -22,6 +22,7 @@ namespace MouseBeautifier
         private ToggleSwitch tgRope = null!;
         private ToggleSwitch tgTrail = null!;
         private ToggleSwitch tgGlow = null!;
+        private ToggleSwitch tgOrbit = null!;
         private ToggleSwitch tgStartup = null!;
 
         // combos
@@ -34,6 +35,7 @@ namespace MouseBeautifier
         private TextBox tbRopeColor = null!;
         private TextBox tbTrailColor = null!;
         private TextBox tbGlowColor = null!;
+        private TextBox tbOrbitColor = null!;
         private TextBox tbIconPath = null!;
 
         // sliders
@@ -51,6 +53,10 @@ namespace MouseBeautifier
         private Slider slTrailWidth = null!;
         private Slider slGlowSize = null!;
         private Slider slGlowInt = null!;
+        private Slider slOrbitCount = null!;
+        private Slider slOrbitRadius = null!;
+        private Slider slOrbitSpeed = null!;
+        private Slider slOrbitSize = null!;
 
         // button
         private Button btnBrowse = null!;
@@ -72,6 +78,7 @@ namespace MouseBeautifier
             BuildClickCard(root);
             BuildRopeCard(root);
             BuildTrailCard(root);
+            BuildOrbitCard(root);
             BuildGlowCard(root);
             BuildGeneralCard(root);
 
@@ -167,6 +174,20 @@ namespace MouseBeautifier
             body.Children.Add(TextRow("TrailColor", "拖尾颜色 (#RRGGBB)", out tbTrailColor));
             body.Children.Add(SliderRow("TrailLength", "拖尾长度 (秒)", 0.1, 2, 0.05, out slTrailLen));
             body.Children.Add(SliderRow("TrailWidth", "拖尾宽度", 1, 20, 0.5, out slTrailWidth));
+
+            root.Children.Add(card);
+        }
+
+        private void BuildOrbitCard(StackPanel root)
+        {
+            var card = Card("环绕粒子", out var body);
+
+            body.Children.Add(ToggleRow("EnableOrbit", "启用环绕粒子", out tgOrbit));
+            body.Children.Add(SliderRow("OrbitCount", "粒子数量", 1, 60, 1, out slOrbitCount));
+            body.Children.Add(SliderRow("OrbitRadius", "环绕半径", 10, 200, 1, out slOrbitRadius));
+            body.Children.Add(SliderRow("OrbitSpeed", "旋转速度 (度/秒)", -360, 360, 5, out slOrbitSpeed));
+            body.Children.Add(SliderRow("OrbitSize", "粒子大小", 1, 20, 0.5, out slOrbitSize));
+            body.Children.Add(TextRow("OrbitColor", "粒子颜色 (#RRGGBB)", out tbOrbitColor));
 
             root.Children.Add(card);
         }
@@ -376,6 +397,13 @@ namespace MouseBeautifier
             tbGlowColor.Text = s.GlowColor;
             SetSlider(slGlowSize, s.GlowSize);
             SetSlider(slGlowInt, s.GlowIntensity);
+
+            tgOrbit.IsOn = s.EnableOrbit;
+            SetSlider(slOrbitCount, s.OrbitCount);
+            SetSlider(slOrbitRadius, s.OrbitRadius);
+            SetSlider(slOrbitSpeed, s.OrbitSpeed);
+            SetSlider(slOrbitSize, s.OrbitSize);
+            tbOrbitColor.Text = s.OrbitColor;
 
             tgStartup.IsOn = s.StartWithWindows;
         }

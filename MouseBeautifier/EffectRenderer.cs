@@ -40,6 +40,7 @@ namespace MouseBeautifier
         private Vector2 _lastCursor;
         private float _lean;
         private double _animTime;
+        private float _orbitAngle;
 
         public EffectRenderer(CanvasControl canvas, Image iconImage)
         {
@@ -126,6 +127,7 @@ namespace MouseBeautifier
             float targetLean = Math.Clamp(vel.X * 0.015f, -30f, 30f);
             _lean += (targetLean - _lean) * (float)Math.Min(1, dt * 8);
             _animTime += dt;
+            if (s.EnableOrbit) _orbitAngle = (_orbitAngle + (float)(s.OrbitSpeed * dt)) % 360f;
 
             if (s.EnableClickEffects)
             {
@@ -151,6 +153,7 @@ namespace MouseBeautifier
 
             if (s.EnableGlow) DrawGlow(session, cursor, s);
             if (s.EnableTrail) _trail.Render(session, ColorsUtil.Parse(s.TrailColor), (float)s.TrailWidth);
+            if (s.EnableOrbit) DrawOrbit(session, cursor, s);
             if (s.EnableRope) DrawRope(session, s);
             _particles.Render(session);
         }
@@ -170,6 +173,36 @@ namespace MouseBeautifier
                 RadiusY = r,
             };
             session.FillCircle(c.X, c.Y, r, brush);
+        }
+
+        // ---------- Orbit (环绕旋转粒子) ----------
+        private void DrawOrbit(CanvasDrawingSession session, Vector2 c, AppSettings s)
+        {
+            int n = Math.Max(1, (int)s.OrbitCount);
+            float radius = (float)s.OrbitRadius;
+            float size = (float)s.OrbitSize;
+            var baseColor = ColorsUtil.Parse(s.OrbitColor);
+
+            // faint connecting ring for a cohesive "halo" look
+            using (var ring = new CanvasSolidColorBrush(session, baseColor))
+            {
+                ring.Opacity = 0.16f;
+                session.DrawCircle(c.X, c.Y, radius, ring, Math.Max(1f, size * 0.3f));
+            }
+
+            // rotating particles; alpha + size gradient gives a comet-tail sweep
+            for (int i = 0; i < n; i++)
+            {
+                double t = i / (double)n;                       // 0 (head) .. 1 (tail)
+                double a = _orbitAngle * Math.PI / 180.0 + i * 2 * Math.PI / n;
+                float px = c.X + (float)Math.Cos(a) * radius;
+                float py = c.Y + (float)Math.Sin(a) * radius;
+
+                var col = baseColor;
+                col.A = (byte)(255 * (0.30 + 0.70 * (1 - t)));
+                float r = size * (0.55f + 0.45f * (1 - (float)t));
+                session.FillCircle(px, py, r, col);
+            }
         }
 
         // ---------- Rope + hanging icon ----------

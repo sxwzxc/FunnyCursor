@@ -42,6 +42,14 @@ namespace MouseBeautifier
         public double GlowSize { get; set; } = 64;
         public double GlowIntensity { get; set; } = 0.5;
 
+        // ---- Orbit (环绕粒子) ----
+        public bool EnableOrbit { get; set; } = false;
+        public int OrbitCount { get; set; } = 12;
+        public double OrbitRadius { get; set; } = 46;
+        public double OrbitSpeed { get; set; } = 90;   // 度/秒
+        public double OrbitSize { get; set; } = 4;
+        public string OrbitColor { get; set; } = "#FFFF9D3D";
+
         // ---- General ----
         public bool StartWithWindows { get; set; } = false;
 
@@ -76,6 +84,13 @@ namespace MouseBeautifier
             GlowColor = "#FF66CCFF";
             GlowSize = 64;
             GlowIntensity = 0.5;
+
+            EnableOrbit = false;
+            OrbitCount = 12;
+            OrbitRadius = 46;
+            OrbitSpeed = 90;
+            OrbitSize = 4;
+            OrbitColor = "#FFFF9D3D";
 
             StartWithWindows = false;
         }
