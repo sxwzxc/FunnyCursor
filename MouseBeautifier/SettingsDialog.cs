@@ -58,6 +58,9 @@ namespace MouseBeautifier
         private static int _contentHeight;
         private static readonly int[] _custColors = new int[16];
         private static GCHandle _custColorsHandle;
+        // Modern UI font (Segoe UI 9pt) applied to every child control so the panel
+        // doesn't render with the default ugly System/MS Sans Serif bitmap font.
+        private static IntPtr _hFont;
 
         public static event Action? ExitRequested;
 
@@ -102,6 +105,18 @@ namespace MouseBeautifier
                 IntPtr.Zero, IntPtr.Zero, _hInstance, IntPtr.Zero);
 
             DlgNative.ShowWindow(_hwnd, DlgNative.SW_SHOW);
+
+            // Create a modern Segoe UI 9pt font once; applied to every child in
+            // CreateChild via WM_SETFONT. This is the single biggest visual fix:
+            // the default Win32 control font is the ancient bitmap System font.
+            if (_hFont == IntPtr.Zero)
+            {
+                _hFont = DlgNative.CreateFont(
+                    -12, 0, 0, 0, DlgNative.FW_NORMAL, 0, 0, 0,
+                    DlgNative.DEFAULT_CHARSET, DlgNative.OUT_TT_PRECIS,
+                    DlgNative.CLIP_DEFAULT_PRECIS, DlgNative.CLEARTYPE_QUALITY,
+                    DlgNative.DEFAULT_PITCH | DlgNative.FF_DONTCARE, "Segoe UI");
+            }
 
             // Set window icon (title bar) to the custom app icon.
             string baseDir = System.IO.Path.GetDirectoryName(typeof(SettingsDialog).Assembly.Location) ?? "";
@@ -336,6 +351,8 @@ namespace MouseBeautifier
         {
             IntPtr hwnd = DlgNative.CreateWindowEx(exStyle, cls, text, style, x, y, w, h,
                 parent, (IntPtr)id, _hInstance, IntPtr.Zero);
+            if (_hFont != IntPtr.Zero)
+                DlgNative.SendMessage(hwnd, DlgNative.WM_SETFONT, _hFont, (IntPtr)1);
             _children.Add((hwnd, y));
             return hwnd;
         }

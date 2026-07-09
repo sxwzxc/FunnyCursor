@@ -288,5 +288,22 @@ namespace MouseBeautifier
 
         [DllImport("user32.dll", SetLastError = true)]
         public static extern IntPtr SetClipboardData(uint uFormat, IntPtr hMem);
+
+        // ---- Font (modern Segoe UI for the settings panel) ----
+        public const int WM_SETFONT = 0x0030;
+        public const int FW_NORMAL = 400;
+        public const int DEFAULT_CHARSET = 1;
+        public const int OUT_TT_PRECIS = 4;
+        public const int CLIP_DEFAULT_PRECIS = 0;
+        public const int CLEARTYPE_QUALITY = 5;
+        public const int DEFAULT_PITCH = 0;
+        public const int FF_DONTCARE = 0;
+
+        [DllImport("gdi32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        public static extern IntPtr CreateFont(
+            int nHeight, int nWidth, int nEscapement, int nOrientation,
+            int fnWeight, int fdwItalic, int fdwUnderline, int fdwStrikeOut,
+            int fdwCharSet, int fdwOutputPrecision, int fdwClipPrecision,
+            int fdwQuality, int fdwPitchAndFamily, string lpszFace);
     }
 }

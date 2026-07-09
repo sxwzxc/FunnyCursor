@@ -37,6 +37,13 @@ namespace MouseBeautifier
         [STAThread]
         public static int Main(string[] args)
         {
+            // Hidden self-test mode: run rope physics tests and exit, so the
+            // stability of the Verlet integrator can be verified headlessly.
+            if (args.Length > 0 && args[0] == "--test-rope")
+            {
+                return RopePhysicsTests.Run();
+            }
+
             Log("Main start");
             AppDomain.CurrentDomain.UnhandledException += (_, e) =>
                 Log("UnhandledException: " + e.ExceptionObject);
