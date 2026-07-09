@@ -1,0 +1,34 @@
+# .NET / WinUI build output
+bin/
+obj/
+*.user
+*.suo
+.vs/
+artifacts/
+
+# NuGet
+packages/
+*.nupkg
+
+# Rider / VS Code
+.idea/
+.vscode/
+
+# Logs
+*.log
+
+# Local user data (runtime settings are generated at first launch)
+MouseBeautifier/AppData/
+
+# OS
+Thumbs.db
+Desktop.ini
+
+# Local project data (memory / logs)
+.workbuddy/
+build_debug.log
+
+# Stray compiler debug output
+xc_err.txt
+xc_out.txt
+
