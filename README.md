@@ -46,7 +46,7 @@
 | 运行时 | .NET 8（`net8.0-windows10.0.19041.0`） |
 | 分发 | 自包含非打包（`WindowsPackageType=None`、`WindowsAppSDKSelfContained=true`） |
 | 物理 | 自实现 Verlet 积分绳子模拟 |
-| 窗口 | 透明全屏覆盖层：DWM 透明合成 + `WS_EX_TRANSPARENT` 点击穿透 + `WS_EX_TOPMOST` 置顶，覆盖多显示器虚拟屏幕 |
+| 窗口 | 纯 Win32 **分层窗口**（`WS_EX_LAYERED`）：Win2D 离屏 `CanvasRenderTarget` 渲染后 `GetPixelBytes` 读回 32 位预乘 ARGB 像素，经 `UpdateLayeredWindow` 逐帧推送；空白像素 alpha=0 完全透明，桌面清晰可见、零模糊；`WS_EX_TRANSPARENT` 点击穿透 + `WS_EX_TOPMOST` 置顶，覆盖多显示器虚拟屏幕 |
 | 托盘 | Win32 消息窗口 + `Shell_NotifyIcon` + `TrackPopupMenu` |
 
 > 本项目采用**代码优先（Code-Behind / 无 XAML）**方式构建 UI，所有窗口与控件均在 C# 中创建。
@@ -109,7 +109,7 @@ dotnet build -c Release -p:Platform=x64
 MouseBeautifier/
 ├── App.xaml.cs            # 应用入口与生命周期（无 XAML）
 ├── AppInfo.cs             # 版本号 / 作者 / 版权 / 仓库地址（集中管理）
-├── OverlayWindow.xaml.cs  # 透明覆盖层 + 120fps 渲染循环
+├── OverlayHost.cs         # 纯 Win32 分层窗口覆盖层（UpdateLayeredWindow + Win2D 离屏渲染）
 ├── SettingsDialog.cs      # 设置面板（纯 Win32 对话框，避开 WinUI 主题资源依赖）
 ├── DialogNative.cs        # 设置对话框所需的 Win32 P/Invoke 声明
 ├── EffectRenderer.cs      # 所有视觉的绘制编排

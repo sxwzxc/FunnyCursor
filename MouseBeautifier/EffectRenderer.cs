@@ -5,11 +5,6 @@ using System.Threading.Tasks;
 using Microsoft.Graphics.Canvas;
 using Microsoft.Graphics.Canvas.Brushes;
 using Microsoft.Graphics.Canvas.Geometry;
-using Microsoft.Graphics.Canvas.UI.Xaml;
-using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.Foundation;
 using Windows.UI;
 
@@ -21,8 +16,7 @@ namespace MouseBeautifier
     /// </summary>
     public sealed class EffectRenderer : IDisposable
     {
-        private readonly CanvasControl _canvas;
-        private readonly Image _iconImage;
+        private readonly ICanvasResourceCreator _creator;
         private readonly ParticleSystem _particles = new();
         private readonly RopeSimulator _rope = new();
         private readonly Trail _trail = new();
@@ -42,10 +36,9 @@ namespace MouseBeautifier
         private double _animTime;
         private float _orbitAngle;
 
-        public EffectRenderer(CanvasControl canvas, Image iconImage)
+        public EffectRenderer(ICanvasResourceCreator creator)
         {
-            _canvas = canvas;
-            _iconImage = iconImage;
+            _creator = creator;
             SettingsManager.Changed += OnSettingsChanged;
             _settingsHooked = true;
             OnSettingsChanged();
@@ -59,9 +52,9 @@ namespace MouseBeautifier
         {
             try
             {
-                _pigIcon = await IconImage.LoadAsync(_canvas,
+                _pigIcon = await IconImage.LoadAsync(_creator,
                     Path.Combine(AppContext.BaseDirectory, "Assets/pig.png"));
-                _girlIcon = await IconImage.LoadAsync(_canvas,
+                _girlIcon = await IconImage.LoadAsync(_creator,
                     Path.Combine(AppContext.BaseDirectory, "Assets/girl.png"));
                 await LoadCustomIconAsync();
             }
@@ -87,20 +80,16 @@ namespace MouseBeautifier
                 _customIcon = null;
                 return;
             }
-            // SVG is rendered through the XAML Image control (created on the UI thread).
+            // SVG is not supported by the layered (GDI-presented) overlay; fall
+            // back to the built-in vector shape instead of loading a vector source.
             if (Path.GetExtension(path).ToLowerInvariant() == ".svg")
             {
-                try
-                {
-                    var uri = new Uri("file:///" + path.Replace('\\', '/'));
-                    _customIcon = new IconImage { SvgSource = new SvgImageSource(uri) };
-                }
-                catch { _customIcon = null; }
+                _customIcon = null;
                 return;
             }
             try
             {
-                _customIcon = await IconImage.LoadAsync(_canvas, path);
+                _customIcon = await IconImage.LoadAsync(_creator, path);
             }
             catch { _customIcon = null; }
         }
@@ -229,53 +218,30 @@ namespace MouseBeautifier
             double finalAngle = Math.Clamp(swing + _lean, -85, 85);
 
             var icon = GetImageIcon(s.IconType);
-            if (icon != null)
+            // SVG is unsupported by the layered overlay, so any SVG custom icon
+            // falls through to the built-in vector shape below.
+            bool hasBitmap = icon != null && icon.SvgSource == null && icon.Frames != null;
+            if (hasBitmap)
             {
-                if (icon.SvgSource != null)
+                float half = (float)(s.IconSize / 2);
+                float size = (float)s.IconSize;
+
+                var saved = session.Transform;
+                session.Transform = Matrix3x2.CreateTranslation(bob) *
+                                    Matrix3x2.CreateRotation((float)(finalAngle * Math.PI / 180f));
+
+                var frame = icon.GetFrame(_animTime);
+                if (frame != null)
                 {
-                    // SVG: drawn via the XAML Image overlay (vector, alpha preserved).
-                    double size = s.IconSize;
-                    _iconImage.Visibility = Visibility.Visible;
-                    _iconImage.Source = icon.SvgSource;
-                    _iconImage.Width = size;
-                    _iconImage.Height = size;
-                    _iconImage.Stretch = Stretch.Uniform;
-                    Canvas.SetLeft(_iconImage, bob.X - size / 2);
-                    Canvas.SetTop(_iconImage, bob.Y - size / 2);
-                    if (_iconImage.RenderTransform is not RotateTransform rt)
-                    {
-                        rt = new RotateTransform();
-                        _iconImage.RenderTransform = rt;
-                    }
-                    rt.Angle = finalAngle;
-                    rt.CenterX = size / 2;
-                    rt.CenterY = size / 2;
+                    var dst = new Rect(-half, -half, size, size);
+                    var src = new Rect(0, 0, frame.Size.Width, frame.Size.Height);
+                    // Default CanvasAlphaMode (Premultiplied) keeps PNG / GIF transparency correct.
+                    session.DrawImage(frame, dst, src, 1.0f, CanvasImageInterpolation.HighQualityCubic);
                 }
-                else
-                {
-                    _iconImage.Visibility = Visibility.Collapsed;
-
-                    float half = (float)(s.IconSize / 2);
-                    float size = (float)s.IconSize;
-
-                    var saved = session.Transform;
-                    session.Transform = Matrix3x2.CreateTranslation(bob) *
-                                        Matrix3x2.CreateRotation((float)(finalAngle * Math.PI / 180f));
-
-                    var frame = icon.GetFrame(_animTime);
-                    if (frame != null)
-                    {
-                        var dst = new Rect(-half, -half, size, size);
-                        var src = new Rect(0, 0, frame.Size.Width, frame.Size.Height);
-                        // Default CanvasAlphaMode (Premultiplied) keeps PNG / GIF transparency correct.
-                        session.DrawImage(frame, dst, src, 1.0f, CanvasImageInterpolation.HighQualityCubic);
-                    }
-                    session.Transform = saved;
-                }
+                session.Transform = saved;
             }
             else
             {
-                _iconImage.Visibility = Visibility.Collapsed;
                 DrawBuiltinIcon(session, bob, (float)finalAngle, s);
             }
         }

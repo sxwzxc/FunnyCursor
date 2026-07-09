@@ -8,7 +8,7 @@ namespace MouseBeautifier
 {
     public sealed partial class App : Application
     {
-        private OverlayWindow? _overlay;
+        private OverlayHost? _overlay;
         private TrayIcon? _tray;
         private bool _shutting;
 
@@ -67,10 +67,8 @@ namespace MouseBeautifier
                 SettingsManager.Load();
                 Log("Settings loaded");
 
-                _overlay = new OverlayWindow();
-                Log("OverlayWindow constructed");
-                _overlay.Activate();
-                Log("Overlay activated");
+                _overlay = new OverlayHost();
+                Log("OverlayHost created");
                 _overlay.Start();
                 Log("Overlay started");
 
@@ -85,7 +83,6 @@ namespace MouseBeautifier
                 _tray.ExitRequested += () => RequestExit();
                 Log("Tray created");
 
-                _overlay.Closed += (_, _) => RequestExit();
                 Log("OnLaunched done");
             }
             catch (Exception ex)
