@@ -17,6 +17,16 @@
     <ApplicationIcon>Assets\funnycursor.ico</ApplicationIcon>
     <LangVersion>latest</LangVersion>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+
+    <!-- 产品元数据 -->
+    <Version>1.1.0</Version>
+    <AssemblyVersion>1.1.0.0</AssemblyVersion>
+    <FileVersion>1.1.0.0</FileVersion>
+    <Company>sxwzxc</Company>
+    <Product>FunnyCursor 鼠标美化工具</Product>
+    <Authors>sxwzxc</Authors>
+    <Copyright>Copyright © 2026 sxwzxc. All rights reserved.</Copyright>
+    <Description>Windows 平台鼠标美化工具：点击特效、悬挂物理挂件、光标拖尾、环绕粒子与光晕。</Description>
     <!-- PRI / MRT generation is left disabled on purpose: this build environment
          has no Visual Studio AppxPackage tooling (Microsoft.Build.Packaging.Pri.Tasks.dll),
          so enabling it breaks the build. Consequently the WinUI framework theme

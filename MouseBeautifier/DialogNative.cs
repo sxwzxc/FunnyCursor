@@ -275,5 +275,18 @@ namespace MouseBeautifier
             public string lpszClassName;
             public IntPtr hIconSm;
         }
+
+        // ---- Clipboard (用于「关于」面板复制版本号) ----
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool OpenClipboard(IntPtr hWndNewOwner);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool CloseClipboard();
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool EmptyClipboard();
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern IntPtr SetClipboardData(uint uFormat, IntPtr hMem);
     }
 }

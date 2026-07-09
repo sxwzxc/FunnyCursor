@@ -27,7 +27,7 @@ namespace MouseBeautifier
 
         // control ids
         private const int ID_GRP_CLICK = 10, ID_GRP_ROPE = 11, ID_GRP_TRAIL = 12,
-            ID_GRP_ORBIT = 13, ID_GRP_GLOW = 14, ID_GRP_GENERAL = 15;
+            ID_GRP_ORBIT = 13, ID_GRP_GLOW = 14, ID_GRP_GENERAL = 15, ID_GRP_ABOUT = 16;
         private const int ID_CHK_CLICK = 100, ID_CHK_ROPE = 101, ID_CHK_TRAIL = 102,
             ID_CHK_ORBIT = 103, ID_CHK_GLOW = 104, ID_CHK_STARTUP = 105;
         private const int ID_CMB_PRESET = 200, ID_CMB_ICON = 201;
@@ -40,7 +40,7 @@ namespace MouseBeautifier
         private const int ID_BTN_CLICKCOLOR = 400, ID_BTN_ICONCOLOR = 401, ID_BTN_ROPECOLOR = 402,
             ID_BTN_TRAILCOLOR = 403, ID_BTN_ORBITCOLOR = 404, ID_BTN_GLOWCOLOR = 405;
         private const int ID_EDT_ICONPATH = 500, ID_BTN_BROWSE = 501;
-        private const int ID_BTN_RESET = 600, ID_BTN_EXIT = 601;
+        private const int ID_BTN_RESET = 600, ID_BTN_EXIT = 601, ID_BTN_OPENREPO = 602, ID_BTN_COPYVER = 603;
 
         private static readonly string[] PresetVals = { "sparkle", "confetti", "ring", "ripple" };
         private static readonly string[] PresetDisp = { "闪烁粒子", "彩色纸屑", "扩散光环", "水波纹" };
@@ -96,7 +96,7 @@ namespace MouseBeautifier
             }
 
             _hwnd = DlgNative.CreateWindowEx(
-                0, _className, "FunnyCursor 设置",
+                0, _className, $"FunnyCursor 设置  v{AppInfo.Version}",
                 DlgNative.WS_OVERLAPPEDWINDOW | DlgNative.WS_VSCROLL,
                 DlgNative.CW_USEDEFAULT, DlgNative.CW_USEDEFAULT, DLG_W, 640,
                 IntPtr.Zero, IntPtr.Zero, _hInstance, IntPtr.Zero);
@@ -204,6 +204,14 @@ namespace MouseBeautifier
             AddButton(hWnd, ID_BTN_RESET, "恢复默认设置", ref y, 150, 24);
             AddButton(hWnd, ID_BTN_EXIT, "退出程序", ref y, 150, 24);
 
+            // ---- 关于 (5 rows) ----
+            y = GroupStart(ID_GRP_ABOUT, "关于", y, 5);
+            AddInfoLabel(hWnd, "产品", $"{AppInfo.Product}", ref y);
+            AddInfoLabel(hWnd, "版本", $"{AppInfo.Version}", ref y, ID_BTN_COPYVER, "复制");
+            AddInfoLabel(hWnd, "作者", AppInfo.Author, ref y);
+            AddInfoLabel(hWnd, "版权", AppInfo.Copyright, ref y);
+            AddInfoLabel(hWnd, "仓库", AppInfo.RepositoryUrl, ref y, ID_BTN_OPENREPO, "打开");
+
             _contentHeight = y + 10;
             DlgNative.GetClientRect(hWnd, out DlgNative.RECT rc);
             int clientH = rc.bottom - rc.top;
@@ -275,6 +283,25 @@ namespace MouseBeautifier
             y += ROW_H;
         }
 
+        /// <summary>
+        /// 创建一行"标签 : 值 [+ 操作按钮]"的信息行，用于「关于」分组。
+        /// valueBtnId 与 valueBtnText 为 0/null 时不显示按钮。
+        /// </summary>
+        private static void AddInfoLabel(IntPtr parent, string label, string value, ref int y, int valueBtnId = 0, string? valueBtnText = null)
+        {
+            CreateChild(DlgNative.WC_STATIC, label, 0,
+                DlgNative.SS_LEFT | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE, LBL_X, y + 2, 120, 18, parent, 0);
+            CreateChild(DlgNative.WC_STATIC, value, 0,
+                DlgNative.SS_LEFT | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE, CTRL_X, y + 2, 220, 18, parent, 0);
+            if (valueBtnId != 0 && !string.IsNullOrEmpty(valueBtnText))
+            {
+                CreateChild(DlgNative.WC_BUTTON, valueBtnText!, valueBtnId,
+                    DlgNative.BS_PUSHBUTTON | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE | DlgNative.WS_TABSTOP,
+                    CTRL_X + 228, y, 60, 20, parent, 0);
+            }
+            y += ROW_H;
+        }
+
         private static void AddTrack(IntPtr parent, int id, string label, ref int y, int min, int max, double val)
         {
             CreateChild(DlgNative.WC_STATIC, label, 0,
@@ -339,6 +366,12 @@ namespace MouseBeautifier
             }
             if (id == ID_BTN_EXIT) { ExitRequested?.Invoke(); return; }
             if (id == ID_BTN_BROWSE) { BrowseIcon(hWnd); return; }
+            if (id == ID_BTN_OPENREPO) { OpenUrl(AppInfo.RepositoryUrl); return; }
+            if (id == ID_BTN_COPYVER)
+            {
+                CopyToClipboard($"FunnyCursor v{AppInfo.Version}");
+                return;
+            }
 
             if (id == ID_BTN_CLICKCOLOR || id == ID_BTN_ICONCOLOR || id == ID_BTN_ROPECOLOR ||
                 id == ID_BTN_TRAILCOLOR || id == ID_BTN_ORBITCOLOR || id == ID_BTN_GLOWCOLOR)
@@ -542,6 +575,41 @@ namespace MouseBeautifier
         {
             var c = ColorsUtil.Parse(hex);
             return (c.B << 16) | (c.G << 8) | c.R;
+        }
+
+        // ---------------- misc helpers ----------------
+
+        /// <summary>用系统默认浏览器打开 URL（ShellExecute 的等价调用）。</summary>
+        private static void OpenUrl(string url)
+        {
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = url,
+                    UseShellExecute = true,
+                });
+            }
+            catch { /* 用户取消或无默认浏览器 */ }
+        }
+
+        /// <summary>把文本写入剪贴板（OLE 剪贴板，无需引用 WinForms）。</summary>
+        private static void CopyToClipboard(string text)
+        {
+            // 走 Win32 OpenClipboard / SetClipboardData，避免依赖 System.Windows.Forms。
+            if (!DlgNative.OpenClipboard(IntPtr.Zero)) return;
+            try
+            {
+                DlgNative.EmptyClipboard();
+                // CF_UNICODETEXT = 13
+                IntPtr hGlobal = Marshal.StringToHGlobalUni(text);
+                DlgNative.SetClipboardData(13, hGlobal);
+                // 系统拥有该内存，不要 FreeHGlobal。
+            }
+            finally
+            {
+                DlgNative.CloseClipboard();
+            }
         }
     }
 }

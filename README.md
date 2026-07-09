@@ -33,6 +33,10 @@
    - 最小化到托盘而非退出；左键 / 双击托盘图标打开设置面板，右键弹出菜单（打开 / 退出）。
    - 设置内可开启开机自启（写入注册表 `Run` 键）。
 
+7. **关于面板**
+   - 设置面板底部新增「关于」分组，集中展示产品名、版本号、作者、版权与仓库地址。
+   - 版本号旁可一键复制；仓库地址可一键在浏览器打开。
+
 ## 技术栈
 
 | 项目 | 说明 |
@@ -102,6 +106,7 @@ dotnet build -c Release -p:Platform=x64
 ```
 MouseBeautifier/
 ├── App.xaml.cs            # 应用入口与生命周期（无 XAML）
+├── AppInfo.cs             # 版本号 / 作者 / 版权 / 仓库地址（集中管理）
 ├── OverlayWindow.xaml.cs  # 透明覆盖层 + 120fps 渲染循环
 ├── SettingsDialog.cs      # 设置面板（纯 Win32 对话框，避开 WinUI 主题资源依赖）
 ├── DialogNative.cs        # 设置对话框所需的 Win32 P/Invoke 声明
