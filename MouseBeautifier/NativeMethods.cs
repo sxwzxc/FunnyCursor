@@ -14,6 +14,7 @@ namespace MouseBeautifier
         public const int WS_EX_TOPMOST = 0x8;
         public const int WS_EX_TOOLWINDOW = 0x80;
         public const int WS_EX_NOREDIRECTIONBITMAP = 0x00200000;
+        public const int WS_EX_NOACTIVATE = 0x08000000;
 
         // ---- Non-extended window styles ----
         public const int WS_POPUP = unchecked((int)0x80000000);

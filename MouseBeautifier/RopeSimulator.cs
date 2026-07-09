@@ -47,8 +47,12 @@ namespace MouseBeautifier
             _pos[0] = anchor;
             _prev[0] = anchor;
 
-            float g = _gravity * (float)(dt * dt);
-            float damp = MathF.Pow(_damping, (float)(dt * 60f));
+            // Clamp dt so a stutter (e.g. window dragging) can't launch the rope
+            // across the screen in a single Verlet step.
+            double simDt = Math.Min(dt, 1.0 / 60.0);
+
+            float g = _gravity * (float)(simDt * simDt);
+            float damp = MathF.Pow(_damping, (float)(simDt * 60f));
 
             for (int i = 1; i <= _n; i++)
             {
@@ -60,7 +64,9 @@ namespace MouseBeautifier
             }
 
             // Distance constraints (iterate; more iterations => stiffer rope).
-            int iters = 6 + (int)(_stiffness * 24);
+            // Use enough iterations to keep the rope from stretching past its
+            // natural length even when the cursor is whipped around quickly.
+            int iters = 16 + (int)(_stiffness * 32);
             for (int k = 0; k < iters; k++)
             {
                 _pos[0] = anchor;
@@ -85,6 +91,21 @@ namespace MouseBeautifier
                     }
                 }
                 _pos[0] = anchor;
+            }
+
+            // Safety clamp: never let any point wander more than the rope's total
+            // length from the anchor. This catches the rare case where a huge dt
+            // spike outran the constraint solver and the bob "flies off".
+            float maxDist = _n * _segLen * 1.05f;
+            for (int i = 1; i <= _n; i++)
+            {
+                var rel = _pos[i] - anchor;
+                float d = rel.Length();
+                if (d > maxDist)
+                {
+                    _pos[i] = anchor + rel * (maxDist / d);
+                    _prev[i] = _pos[i];
+                }
             }
         }
 
