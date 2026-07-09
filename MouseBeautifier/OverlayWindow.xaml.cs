@@ -102,24 +102,42 @@ namespace MouseBeautifier
             _timer.Start();
         }
 
+        private int _tickErrors;
+
         private void OnTick(object? sender, object e)
         {
-            double dt = Math.Min(_sw.Elapsed.TotalSeconds, 0.05);
-            _sw.Restart();
+            try
+            {
+                double dt = Math.Min(_sw.Elapsed.TotalSeconds, 0.05);
+                _sw.Restart();
 
-            _tracker.GetPosition(out int px, out int py);
-            float dx = (float)((px - _vx) / _scale);
-            float dy = (float)((py - _vy) / _scale);
-            _cursor = new Vector2(dx, dy);
+                _tracker.GetPosition(out int px, out int py);
+                float dx = (float)((px - _vx) / _scale);
+                float dy = (float)((py - _vy) / _scale);
+                _cursor = new Vector2(dx, dy);
 
-            _renderer.Update(dt, _cursor, _tracker);
-            // Request a redraw; the FxCanvas_Draw handler paints the frame.
-            _fx.Invalidate();
+                _renderer.Update(dt, _cursor, _tracker);
+                // Request a redraw; the FxCanvas_Draw handler paints the frame.
+                _fx.Invalidate();
+            }
+            catch (Exception ex)
+            {
+                if (_tickErrors++ < 3)
+                    App.Log("OnTick exception: " + ex);
+                _timer.Stop();
+            }
         }
 
         private void FxCanvas_Draw(object sender, CanvasDrawEventArgs e)
         {
-            _renderer.Render(e.DrawingSession, _cursor);
+            try
+            {
+                _renderer.Render(e.DrawingSession, _cursor);
+            }
+            catch (Exception ex)
+            {
+                App.Log("FxCanvas_Draw exception: " + ex);
+            }
         }
 
         private void Cleanup()

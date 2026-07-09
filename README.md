@@ -103,7 +103,8 @@ dotnet build -c Release -p:Platform=x64
 MouseBeautifier/
 ├── App.xaml.cs            # 应用入口与生命周期（无 XAML）
 ├── OverlayWindow.xaml.cs  # 透明覆盖层 + 120fps 渲染循环
-├── MainWindow.xaml.cs     # 设置面板（纯代码构建）
+├── SettingsDialog.cs      # 设置面板（纯 Win32 对话框，避开 WinUI 主题资源依赖）
+├── DialogNative.cs        # 设置对话框所需的 Win32 P/Invoke 声明
 ├── EffectRenderer.cs      # 所有视觉的绘制编排
 ├── IconImage.cs           # 图标加载（PNG/SVG/GIF，含帧动画与透明度）
 ├── ParticleSystem.cs      # 点击粒子与涟漪

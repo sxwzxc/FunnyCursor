@@ -16,7 +16,13 @@
     <RootNamespace>MouseBeautifier</RootNamespace>
     <LangVersion>latest</LangVersion>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
-    <!-- Skip PRI generation — not needed for non-packaged (None) Windows apps -->
+    <!-- PRI / MRT generation is left disabled on purpose: this build environment
+         has no Visual Studio AppxPackage tooling (Microsoft.Build.Packaging.Pri.Tasks.dll),
+         so enabling it breaks the build. Consequently the WinUI framework theme
+         resources (themeresources.xaml / Microsoft.UI.Xaml.pri) are NOT deployed,
+         which means XamlControlsResources and the heavy themed controls
+         (ToggleSwitch / Slider / ComboBox) cannot be used. The settings UI is built
+         only from controls that render without those theme resources. -->
     <GenerateAppxPackagePris>false</GenerateAppxPackagePris>
     <AppxGeneratePriEnabled>false</AppxGeneratePriEnabled>
     <EnableCoreMrtTooling>false</EnableCoreMrtTooling>

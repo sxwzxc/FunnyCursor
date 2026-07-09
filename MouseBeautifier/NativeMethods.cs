@@ -195,7 +195,9 @@ namespace MouseBeautifier
         [DllImport("user32.dll")]
         public static extern IntPtr LoadIcon(IntPtr hInstance, IntPtr lpIconName);
 
-        [DllImport("user32.dll", SetLastError = true)]
+        // NOTE: Shell_NotifyIcon is exported from SHELL32.dll (not user32.dll). The bare
+        // and ANSI names do not exist on 64-bit Windows, so call the Unicode entry point.
+        [DllImport("shell32.dll", SetLastError = true, EntryPoint = "Shell_NotifyIconW")]
         public static extern bool Shell_NotifyIcon(uint dwMessage, ref NOTIFYICONDATA lpData);
 
         [DllImport("user32.dll", SetLastError = true)]
