@@ -16,7 +16,7 @@ namespace MouseBeautifier
         {
             try
             {
-                var dir = Path.Combine(Path.GetTempPath(), "MouseBeautifier");
+                var dir = Path.Combine(Path.GetTempPath(), "FunnyCursor");
                 Directory.CreateDirectory(dir);
                 File.AppendAllText(Path.Combine(dir, "startup.log"),
                     $"[{DateTime.Now:HH:mm:ss.fff}] {msg}\n");

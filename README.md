@@ -1,4 +1,4 @@
-# MouseBeautifier
+# FunnyCursor
 
 一款 Windows 平台的鼠标美化工具，基于 **WinUI 3 + Win2D** 构建。它在屏幕上叠加一个全屏透明、可点击穿透的图层，实时渲染鼠标点击特效、悬挂绳物理、光标拖尾与光晕，并常驻系统托盘。
 
@@ -70,11 +70,11 @@ dotnet build -c Release -p:Platform=x64
 
 ## 运行
 
-构建产物位于 `MouseBeautifier/bin/x64/<Debug|Release>/MouseBeautifier/`。
-直接运行 `MouseBeautifier.exe` 即可。设置文件保存在：
+构建产物位于 `MouseBeautifier/bin/x64/<Debug|Release>/net8.0-windows10.0.19041.0/`。
+直接运行 `FunnyCursor.exe` 即可。设置文件保存在：
 
 ```
-%LOCALAPPDATA%\MouseBeautifier\settings.json
+%LOCALAPPDATA%\FunnyCursor\settings.json
 ```
 
 ## 使用说明
@@ -116,9 +116,10 @@ MouseBeautifier/
 ├── NativeMethods.cs       # 全部 P/Invoke 声明
 ├── app.manifest          # DPI / 兼容 / 权限清单
 ├── MouseBeautifier.csproj # 项目配置
-└── Assets/               # 内置挂坠图标
-    ├── pig.png            # 🐷 可爱粉色小猪
-    └── girl.png           # 👧 可爱二次元女孩
+└── Assets/               # 内置资源
+    ├── pig.png            # 🐷 可爱粉色小猪（挂坠）
+    ├── girl.png           # 👧 可爱二次元女孩（挂坠）
+    └── funnycursor.ico   # 应用图标（紫粉蓝渐变 + 光标 + 彩虹拖尾）
 ```
 
 ## 已知限制

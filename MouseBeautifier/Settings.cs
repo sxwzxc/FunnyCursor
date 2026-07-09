@@ -104,10 +104,10 @@ namespace MouseBeautifier
 
         private static readonly string FilePath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "MouseBeautifier", "settings.json");
+            "FunnyCursor", "settings.json");
 
         private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
-        private const string AppName = "MouseBeautifier";
+        private const string AppName = "FunnyCursor";
 
         public static void Load()
         {

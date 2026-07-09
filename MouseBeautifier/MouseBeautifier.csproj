@@ -12,8 +12,9 @@
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <Platforms>x64</Platforms>
-    <AssemblyName>MouseBeautifier</AssemblyName>
+    <AssemblyName>FunnyCursor</AssemblyName>
     <RootNamespace>MouseBeautifier</RootNamespace>
+    <ApplicationIcon>Assets\funnycursor.ico</ApplicationIcon>
     <LangVersion>latest</LangVersion>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <!-- PRI / MRT generation is left disabled on purpose: this build environment
@@ -39,6 +40,9 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="Assets\girl.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Assets\funnycursor.ico">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

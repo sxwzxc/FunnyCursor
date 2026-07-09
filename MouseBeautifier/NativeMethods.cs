@@ -6,12 +6,24 @@ namespace MouseBeautifier
     internal static class NativeMethods
     {
         // ---- Window styles ----
+        public const int GWL_STYLE = -16;
         public const int GWL_EXSTYLE = -20;
         public const int GWLP_WNDPROC = -4;
         public const int WS_EX_LAYERED = 0x80000;
         public const int WS_EX_TRANSPARENT = 0x20;
         public const int WS_EX_TOPMOST = 0x8;
         public const int WS_EX_TOOLWINDOW = 0x80;
+        public const int WS_EX_NOREDIRECTIONBITMAP = 0x00200000;
+
+        // ---- Non-extended window styles ----
+        public const int WS_POPUP = unchecked((int)0x80000000);
+        public const int WS_VISIBLE = 0x10000000;
+        public const int WS_OVERLAPPEDWINDOW = 0x00CF0000; // WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX
+        public const int WS_CAPTION = 0x00C00000;
+        public const int WS_THICKFRAME = 0x00040000;
+        public const int WS_SYSMENU = 0x00080000;
+        public const int WS_MINIMIZEBOX = 0x00020000;
+        public const int WS_MAXIMIZEBOX = 0x00010000;
 
         public const int SW_HIDE = 0;
         public const int SW_RESTORE = 9;
@@ -23,6 +35,12 @@ namespace MouseBeautifier
         public const int SWP_NOMOVE = 0x0002;
         public const int SWP_NOACTIVATE = 0x0010;
         public const int SWP_SHOWWINDOW = 0x0040;
+        public const int SWP_FRAMECHANGED = 0x0020;
+        public const int SWP_NOZORDER = 0x0004;
+
+        // ---- Layered window attributes ----
+        public const uint LWA_COLORKEY = 0x00000001;
+        public const uint LWA_ALPHA = 0x00000002;
 
         // ---- System metrics (virtual screen) ----
         public const int SM_XVIRTUALSCREEN = 76;
@@ -168,6 +186,9 @@ namespace MouseBeautifier
         public static extern int SetWindowCompositionAttribute(IntPtr hwnd, ref WINCOMPATTRDATA data);
 
         [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool SetLayeredWindowAttributes(IntPtr hwnd, uint crKey, byte bAlpha, uint dwFlags);
+
+        [DllImport("user32.dll", SetLastError = true)]
         public static extern IntPtr SetWindowsHookEx(int idHook, LowLevelMouseProc lpfn, IntPtr hMod, uint dwThreadId);
 
         [DllImport("user32.dll", SetLastError = true)]
@@ -223,5 +244,16 @@ namespace MouseBeautifier
 
         [DllImport("user32.dll", SetLastError = true)]
         public static extern bool UnregisterClass(string lpClassName, IntPtr hInstance);
+
+        // ---- Icon loading ----
+        public const int IMAGE_ICON = 1;
+        public const int LR_LOADFROMFILE = 0x00000010;
+        public const int LR_DEFAULTSIZE = 0x00000040;
+        public const int WM_SETICON = 0x0080;
+        public const int ICON_SMALL = 0;
+        public const int ICON_BIG = 1;
+
+        [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+        public static extern IntPtr LoadImage(IntPtr hInst, string name, uint type, int cx, int cy, uint flags);
     }
 }

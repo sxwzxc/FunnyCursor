@@ -96,12 +96,26 @@ namespace MouseBeautifier
             }
 
             _hwnd = DlgNative.CreateWindowEx(
-                0, _className, "MouseBeautifier 设置",
+                0, _className, "FunnyCursor 设置",
                 DlgNative.WS_OVERLAPPEDWINDOW | DlgNative.WS_VSCROLL,
                 DlgNative.CW_USEDEFAULT, DlgNative.CW_USEDEFAULT, DLG_W, 640,
                 IntPtr.Zero, IntPtr.Zero, _hInstance, IntPtr.Zero);
 
             DlgNative.ShowWindow(_hwnd, DlgNative.SW_SHOW);
+
+            // Set window icon (title bar) to the custom app icon.
+            string baseDir = System.IO.Path.GetDirectoryName(typeof(SettingsDialog).Assembly.Location) ?? "";
+            string icoPath = System.IO.Path.Combine(baseDir, "Assets", "funnycursor.ico");
+            if (System.IO.File.Exists(icoPath))
+            {
+                IntPtr hIcon = DlgNative.LoadImage(IntPtr.Zero, icoPath, DlgNative.IMAGE_ICON, 0, 0,
+                    DlgNative.LR_LOADFROMFILE | DlgNative.LR_DEFAULTSIZE);
+                if (hIcon != IntPtr.Zero)
+                {
+                    DlgNative.SendMessage(_hwnd, DlgNative.WM_SETICON, (IntPtr)DlgNative.ICON_BIG, hIcon);
+                    DlgNative.SendMessage(_hwnd, DlgNative.WM_SETICON, (IntPtr)DlgNative.ICON_SMALL, hIcon);
+                }
+            }
         }
 
         private static IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)

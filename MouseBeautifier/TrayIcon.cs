@@ -48,9 +48,16 @@ namespace MouseBeautifier
                 uID = 1,
                 uFlags = NativeMethods.NIF_MESSAGE | NativeMethods.NIF_ICON | NativeMethods.NIF_TIP,
                 uCallbackMessage = NativeMethods.WM_TRAY,
-                szTip = "MouseBeautifier 鼠标美化",
+                szTip = "FunnyCursor 鼠标美化",
             };
-            _nid.hIcon = NativeMethods.LoadIcon(IntPtr.Zero, (IntPtr)NativeMethods.IDI_APPLICATION);
+            // Try to load the custom app icon from the output Assets directory; fall back to default.
+            string baseDir = System.IO.Path.GetDirectoryName(typeof(TrayIcon).Assembly.Location) ?? "";
+            string icoPath = System.IO.Path.Combine(baseDir, "Assets", "funnycursor.ico");
+            IntPtr hIcon = System.IO.File.Exists(icoPath)
+                ? NativeMethods.LoadImage(IntPtr.Zero, icoPath, NativeMethods.IMAGE_ICON, 0, 0,
+                    NativeMethods.LR_LOADFROMFILE | NativeMethods.LR_DEFAULTSIZE)
+                : NativeMethods.LoadIcon(IntPtr.Zero, (IntPtr)NativeMethods.IDI_APPLICATION);
+            _nid.hIcon = hIcon != IntPtr.Zero ? hIcon : NativeMethods.LoadIcon(IntPtr.Zero, (IntPtr)NativeMethods.IDI_APPLICATION);
             NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_ADD, ref _nid);
         }
 

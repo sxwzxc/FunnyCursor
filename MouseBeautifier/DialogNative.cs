@@ -102,6 +102,17 @@ namespace MouseBeautifier
 
         // ---- GetOpenFileName ----
         public const int OFN_FILEMUSTEXIST = 0x00001000;
+
+        // ---- Icon loading (shared with NativeMethods) ----
+        public const int IMAGE_ICON = 1;
+        public const int LR_LOADFROMFILE = 0x00000010;
+        public const int LR_DEFAULTSIZE = 0x00000040;
+        public const int WM_SETICON = 0x0080;
+        public const int ICON_SMALL = 0;
+        public const int ICON_BIG = 1;
+
+        [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+        public static extern IntPtr LoadImage(IntPtr hInst, string name, uint type, int cx, int cy, uint flags);
         public const int OFN_PATHMUSTEXIST = 0x00000800;
         public const int OFN_EXPLORER = 0x00080000;
 

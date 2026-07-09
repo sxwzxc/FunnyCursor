@@ -31,6 +31,9 @@ namespace MouseBeautifier
             overlay.Children.Add(icon);
 
             var grid = new Grid();
+            // Explicit transparent background so the Win2D swap chain's per-pixel
+            // alpha is composited correctly over windows below.
+            grid.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
             grid.Children.Add(_fx);
             grid.Children.Add(overlay);
             this.Content = grid;
@@ -54,18 +57,14 @@ namespace MouseBeautifier
             if (_configured) return;
             _configured = true;
 
-            // Keep the overlay out of the taskbar via the tool-window extended style.
-            int ex0 = (int)NativeMethods.GetWindowLongPtr(_hwnd, NativeMethods.GWL_EXSTYLE);
-            ex0 |= NativeMethods.WS_EX_TOOLWINDOW;
-            NativeMethods.SetWindowLongPtr(_hwnd, NativeMethods.GWL_EXSTYLE, (IntPtr)ex0);
-
-            this.ExtendsContentIntoTitleBar = true;
+            ApplyWindowStyles();
 
             // Make the window background fully transparent via DWM accent.
+            // nFlags=0 (no border drawing); nColor=0 (fully transparent ABGR).
             var accent = new NativeMethods.ACCENTPOLICY
             {
                 nAccentState = NativeMethods.ACCENT_ENABLE_TRANSPARENTGRADIENT,
-                nFlags = 2,
+                nFlags = 0,
                 nColor = 0,
             };
             var data = new NativeMethods.WINCOMPATTRDATA
@@ -78,31 +77,71 @@ namespace MouseBeautifier
             NativeMethods.SetWindowCompositionAttribute(_hwnd, ref data);
             Marshal.FreeHGlobal(data.pData);
 
-            // Click-through + always on top.
+            PositionFullScreen();
+        }
+
+        /// <summary>
+        /// Strips the default WS_OVERLAPPEDWINDOW frame and applies the overlay's
+        /// extended styles: layered (per-pixel alpha) + tool window (no taskbar) +
+        /// transparent (click-through) + topmost (always on top).
+        /// </summary>
+        private void ApplyWindowStyles()
+        {
+            // Remove the default frame / title bar by switching to WS_POPUP.
+            int style = (int)NativeMethods.GetWindowLongPtr(_hwnd, NativeMethods.GWL_STYLE);
+            style &= ~NativeMethods.WS_OVERLAPPEDWINDOW;
+            style |= NativeMethods.WS_POPUP | NativeMethods.WS_VISIBLE;
+            NativeMethods.SetWindowLongPtr(_hwnd, NativeMethods.GWL_STYLE, (IntPtr)style);
+
+            // Extended styles needed for a transparent click-through overlay.
             int ex = (int)NativeMethods.GetWindowLongPtr(_hwnd, NativeMethods.GWL_EXSTYLE);
-            ex |= NativeMethods.WS_EX_TRANSPARENT | NativeMethods.WS_EX_TOPMOST;
+            ex |= NativeMethods.WS_EX_LAYERED
+                | NativeMethods.WS_EX_TOOLWINDOW
+                | NativeMethods.WS_EX_TRANSPARENT
+                | NativeMethods.WS_EX_TOPMOST;
             NativeMethods.SetWindowLongPtr(_hwnd, NativeMethods.GWL_EXSTYLE, (IntPtr)ex);
 
-            // Cover the whole virtual screen (all monitors).
+            // For layered windows: alpha=255 (don't reduce overall opacity),
+            // no color key — per-pixel alpha comes from the DWM + Win2D swap chain.
+            NativeMethods.SetLayeredWindowAttributes(_hwnd, 0, 255, NativeMethods.LWA_ALPHA);
+        }
+
+        /// <summary>
+        /// Sizes the overlay to cover the entire virtual screen (all monitors) and
+        /// forces it to the top of the z-order. SWP_FRAMECHANGED re-evaluates the
+        /// window frame after the style changes above.
+        /// </summary>
+        private void PositionFullScreen()
+        {
             _vx = NativeMethods.GetSystemMetrics(NativeMethods.SM_XVIRTUALSCREEN);
             _vy = NativeMethods.GetSystemMetrics(NativeMethods.SM_YVIRTUALSCREEN);
             int cx = NativeMethods.GetSystemMetrics(NativeMethods.SM_CXVIRTUALSCREEN);
             int cy = NativeMethods.GetSystemMetrics(NativeMethods.SM_CYVIRTUALSCREEN);
             NativeMethods.SetWindowPos(_hwnd, (IntPtr)NativeMethods.HWND_TOPMOST,
-                _vx, _vy, cx, cy, NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW);
+                _vx, _vy, cx, cy,
+                NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW | NativeMethods.SWP_FRAMECHANGED);
 
+            _lastScreenW = cx;
+            _lastScreenH = cy;
             _scale = NativeMethods.GetDpiForSystem() / 96.0;
             _renderer.SetViewport(_vx, _vy, _scale);
         }
 
         public void Start()
         {
+            // Re-apply styles + position after Activate(); WinUI's Window.Activate()
+            // can reset the frame and z-order, so we force them back here.
+            ApplyWindowStyles();
+            PositionFullScreen();
+
             _tracker.Start();
             _sw.Start();
             _timer.Start();
         }
 
         private int _tickErrors;
+        private int _topmostCounter;
+        private int _lastScreenW, _lastScreenH;
 
         private void OnTick(object? sender, object e)
         {
@@ -110,6 +149,29 @@ namespace MouseBeautifier
             {
                 double dt = Math.Min(_sw.Elapsed.TotalSeconds, 0.05);
                 _sw.Restart();
+
+                // Periodically re-assert topmost + re-cover the virtual screen so
+                // the overlay stays on top of other apps and survives resolution /
+                // monitor changes. (~every 2 s at 120 fps)
+                if (++_topmostCounter >= 240)
+                {
+                    _topmostCounter = 0;
+                    int cw = NativeMethods.GetSystemMetrics(NativeMethods.SM_CXVIRTUALSCREEN);
+                    int ch = NativeMethods.GetSystemMetrics(NativeMethods.SM_CYVIRTUALSCREEN);
+                    if (cw != _lastScreenW || ch != _lastScreenH)
+                    {
+                        // Display configuration changed — resize and re-position.
+                        PositionFullScreen();
+                        _lastScreenW = cw;
+                        _lastScreenH = ch;
+                    }
+                    else
+                    {
+                        NativeMethods.SetWindowPos(_hwnd, (IntPtr)NativeMethods.HWND_TOPMOST,
+                            0, 0, 0, 0,
+                            NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE);
+                    }
+                }
 
                 _tracker.GetPosition(out int px, out int py);
                 float dx = (float)((px - _vx) / _scale);
