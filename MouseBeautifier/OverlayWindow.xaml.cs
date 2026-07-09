@@ -23,6 +23,13 @@ namespace MouseBeautifier
         private double _scale = 1;
         private bool _configured;
 
+        // Color-key for the layered window: every pixel of this exact color becomes
+        // fully transparent, so the desktop behind shows through with zero blur and
+        // zero obscuring. Magenta (255,0,255) is chosen because it is virtually never
+        // present in cursor-effect colors or icon art, so it won't accidentally erase
+        // any drawn effect. COLORREF format is 0x00BBGGRR.
+        private const int TRANSPARENT_KEY = 0x00FF00FF;
+
         public OverlayWindow()
         {
             _fx = new CanvasControl();
@@ -37,7 +44,10 @@ namespace MouseBeautifier
             overlay.Children.Add(icon);
 
             var grid = new Grid();
-            grid.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
+            // Opaque magenta = the color-key. The Win2D canvas clears to transparent
+            // and paints effects on top, so the only magenta pixels left are the
+            // "empty" areas — those get keyed out, making the overlay see-through.
+            grid.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 255, 0, 255));
             grid.Children.Add(_fx);
             grid.Children.Add(overlay);
             this.Content = grid;
@@ -63,15 +73,8 @@ namespace MouseBeautifier
 
             ApplyWindowStyles();
 
-            // Make the window background fully transparent (crisp, no blur) so the
-            // desktop and any windows behind show through with zero obscuring.
-            // ACCENT_ENABLE_TRANSPARENTGRADIENT with nColor=0 gives a completely
-            // transparent surface; the Win2D swap chain's per-pixel-alpha content
-            // (transparent ClearColor set in the ctor) then draws only the effects
-            // on top — nothing else is painted over the screen.
-            //
-            // (BLURBEHIND would blur the desktop behind; we deliberately avoid it
-            // because the user wants the content behind to stay perfectly clear.)
+            // Make the window fully transparent (crisp, no blur) via a layered
+            // window + color key, so the desktop behind shows through unchanged.
             ApplyTransparency();
 
             PositionFullScreen();
@@ -79,12 +82,9 @@ namespace MouseBeautifier
 
         /// <summary>
         /// Strips the default WS_OVERLAPPEDWINDOW frame and applies the overlay's
-        /// extended styles: tool window (no taskbar) + transparent (click-through)
-        /// + topmost (always on top).
-        /// NOTE: WS_EX_LAYERED is intentionally NOT set — WinUI 3 / Win2D render
-        /// through a DXGI swap chain whose alpha the DWM compositor blends
-        /// directly; adding WS_EX_LAYERED + SetLayeredWindowAttributes forces an
-        /// opaque layered composite that shows up as the "black screen" bug.
+        /// extended styles. WS_EX_LAYERED is REQUIRED here — it is what enables the
+        /// color-key transparency (see ApplyTransparency); it also pairs with
+        /// WS_EX_TRANSPARENT for click-through and WS_EX_TOPMOST for always-on-top.
         /// </summary>
         private void ApplyWindowStyles()
         {
@@ -94,44 +94,37 @@ namespace MouseBeautifier
             style |= NativeMethods.WS_POPUP | NativeMethods.WS_VISIBLE;
             NativeMethods.SetWindowLongPtr(_hwnd, NativeMethods.GWL_STYLE, (IntPtr)style);
 
-            // Extended styles needed for a transparent click-through overlay.
+            // Extended styles for a transparent click-through overlay:
+            //  - WS_EX_LAYERED      : enables per-pixel transparency via a color key
+            //  - WS_EX_TRANSPARENT  : mouse hits pass through to windows below
+            //  - WS_EX_TOPMOST      : always on top
+            //  - WS_EX_TOOLWINDOW   : no taskbar button
+            //  - WS_EX_NOACTIVATE   : never steals focus
             int ex = (int)NativeMethods.GetWindowLongPtr(_hwnd, NativeMethods.GWL_EXSTYLE);
-            ex |= NativeMethods.WS_EX_TOOLWINDOW
+            ex |= NativeMethods.WS_EX_LAYERED
+                | NativeMethods.WS_EX_TOOLWINDOW
                 | NativeMethods.WS_EX_TRANSPARENT
                 | NativeMethods.WS_EX_TOPMOST
                 | NativeMethods.WS_EX_NOACTIVATE;
-            // Remove WS_EX_LAYERED if present — it breaks Win2D alpha compositing
-            // and conflicts with the BLURBEHIND accent below.
-            ex &= ~NativeMethods.WS_EX_LAYERED;
             NativeMethods.SetWindowLongPtr(_hwnd, NativeMethods.GWL_EXSTYLE, (IntPtr)ex);
         }
 
         /// <summary>
-        /// Applies a DWM transparent-gradient accent (nColor=0 → fully transparent)
-        /// so the windows beneath the overlay show through crisply with no blur.
-        /// This is what makes the overlay transparent instead of a solid black
-        /// surface. The Win2D effects (transparent ClearColor) then render on top.
+        /// Makes the overlay see-through using a layered window + color key
+        /// (the classic, maximally-compatible transparent-overlay technique).
+        /// Every pixel matching TRANSPARENT_KEY (opaque magenta) is made fully
+        /// transparent, so the desktop and any windows behind show through with
+        /// zero blur and zero obscuring. Only the Win2D effects (which never paint
+        /// magenta) remain visible.
+        /// This deliberately avoids the DWM accent policy: its "true transparent"
+        /// state is unreliable across Windows builds and was rendering solid black
+        /// on the user's machine, whereas the layered/color-key mechanism is stable
+        /// on every Windows 10/11 version.
         /// </summary>
         private void ApplyTransparency()
         {
-            var accent = new NativeMethods.ACCENTPOLICY
-            {
-                nAccentState = NativeMethods.ACCENT_ENABLE_TRANSPARENTGRADIENT,
-                nFlags = 0,
-                nColor = 0,
-                nAnimationId = 0,
-            };
-            int size = Marshal.SizeOf<NativeMethods.ACCENTPOLICY>();
-            IntPtr p = Marshal.AllocHGlobal(size);
-            Marshal.StructureToPtr(accent, p, false);
-            var data = new NativeMethods.WINCOMPATTRDATA
-            {
-                nAttribute = NativeMethods.WCA_ACCENT_POLICY,
-                pData = p,
-                ulDataSize = size,
-            };
-            NativeMethods.SetWindowCompositionAttribute(_hwnd, ref data);
-            Marshal.FreeHGlobal(p);
+            bool ok = NativeMethods.SetLayeredWindowAttributes(_hwnd, (uint)TRANSPARENT_KEY, 0, NativeMethods.LWA_COLORKEY);
+            App.Log("Layered color-key applied (key=0x" + TRANSPARENT_KEY.ToString("X8") + ", ok=" + ok + ")");
         }
 
         /// <summary>
@@ -160,6 +153,7 @@ namespace MouseBeautifier
             // Re-apply styles + position after Activate(); WinUI's Window.Activate()
             // can reset the frame and z-order, so we force them back here.
             ApplyWindowStyles();
+            ApplyTransparency();
             PositionFullScreen();
 
             _tracker.Start();
