@@ -6,14 +6,16 @@ namespace MouseBeautifier
     /// <summary>
     /// System-tray icon built on a message-only window. Left click / double click
     /// opens the panel; right click shows a context menu (open / exit).
-    /// Also owns the global "exit" hotkey (Ctrl+Shift+F10).
+    /// Also owns the global "exit" hotkey (Ctrl+Shift+Q).
     /// </summary>
     internal sealed class TrayIcon : IDisposable
     {
         private const int HOTKEY_ID_EXIT = 1;
-        // Ctrl+Shift+F10 — chosen because it's rarely used by other apps and easy to press.
+        // Ctrl+Shift+Q — easy to remember (Q = Quit) and rarely used by other apps.
         private const uint HOTKEY_MODIFIERS = NativeMethods.MOD_CONTROL | NativeMethods.MOD_SHIFT | NativeMethods.MOD_NOREPEAT;
-        private const uint HOTKEY_VK = NativeMethods.VK_F10;
+        private const uint HOTKEY_VK = 0x51; /* 'Q' */
+        // Fallback: Ctrl+Alt+Q
+        private const uint HOTKEY_MODIFIERS_FALLBACK = NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT | NativeMethods.MOD_NOREPEAT;
 
         private readonly string _className = "MouseBeautifierTray_" + Guid.NewGuid().ToString("N");
         private NativeMethods.WndProc _wndProc = null!;
@@ -66,12 +68,17 @@ namespace MouseBeautifier
             _nid.hIcon = hIcon != IntPtr.Zero ? hIcon : NativeMethods.LoadIcon(IntPtr.Zero, (IntPtr)NativeMethods.IDI_APPLICATION);
             NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_ADD, ref _nid);
 
-            // Register a global hotkey for quick exit (Ctrl+Shift+F10).
+            // Register a global hotkey for quick exit (Ctrl+Shift+Q).
             if (!NativeMethods.RegisterHotKey(_hwnd, HOTKEY_ID_EXIT, HOTKEY_MODIFIERS, HOTKEY_VK))
             {
+                App.Log("RegisterHotKey Ctrl+Shift+Q failed, trying Ctrl+Alt+Q");
                 // Fall back to Ctrl+Alt+Q if the default is taken.
-                NativeMethods.RegisterHotKey(_hwnd, HOTKEY_ID_EXIT,
-                    NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT | NativeMethods.MOD_NOREPEAT, 0x51 /*'Q'*/);
+                if (!NativeMethods.RegisterHotKey(_hwnd, HOTKEY_ID_EXIT, HOTKEY_MODIFIERS_FALLBACK, HOTKEY_VK))
+                    App.Log("RegisterHotKey fallback Ctrl+Alt+Q also failed");
+            }
+            else
+            {
+                App.Log("RegisterHotKey Ctrl+Shift+Q OK");
             }
         }
 
@@ -119,7 +126,7 @@ namespace MouseBeautifier
         {
             IntPtr menu = NativeMethods.CreatePopupMenu();
             NativeMethods.AppendMenu(menu, NativeMethods.MF_STRING, 1, "打开面板");
-            NativeMethods.AppendMenu(menu, NativeMethods.MF_STRING, 2, "退出 (Ctrl+Shift+F10)");
+            NativeMethods.AppendMenu(menu, NativeMethods.MF_STRING, 2, "退出 (Ctrl+Shift+Q)");
             NativeMethods.GetCursorPos(out var pt);
             NativeMethods.SetForegroundWindow(_hwnd);
             NativeMethods.TrackPopupMenu(menu,

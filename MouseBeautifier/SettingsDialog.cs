@@ -202,7 +202,7 @@ namespace MouseBeautifier
             y = GroupStart(ID_GRP_GENERAL, "常规", y, 3);
             AddCheckBox(hWnd, ID_CHK_STARTUP, "开机自启", ref y, SettingsManager.Current.StartWithWindows);
             AddButton(hWnd, ID_BTN_RESET, "恢复默认设置", ref y, 150, 24);
-            AddButton(hWnd, ID_BTN_EXIT, "退出程序 (Ctrl+Shift+F10)", ref y, 200, 24);
+            AddButton(hWnd, ID_BTN_EXIT, "退出程序 (Ctrl+Shift+Q)", ref y, 200, 24);
 
             // ---- 关于 (5 rows) ----
             y = GroupStart(ID_GRP_ABOUT, "关于", y, 5);

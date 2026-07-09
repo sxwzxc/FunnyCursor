@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using System;
 using System.Numerics;
+using System.Runtime.InteropServices;
 using WinRT.Interop;
 
 namespace MouseBeautifier
@@ -62,12 +63,16 @@ namespace MouseBeautifier
 
             ApplyWindowStyles();
 
-            // No DWM accent policy here. The transparency comes entirely from
-            // CanvasControl.ClearColor = transparent (set in the ctor) — the DWM
-            // compositor blends the per-pixel-alpha Win2D swap chain over the
-            // windows below. Setting an accent policy (BLURBEHIND / TRANSPARENT)
-            // actually conflicts with Win2D's own swap-chain alpha and reintroduces
-            // the black-screen bug, so we deliberately leave it unset.
+            // Make the window background show the desktop through (blurred) via a
+            // DWM accent. This is the reliable way to get a see-through WinUI 3 /
+            // Win2D overlay: BLURBEHIND composites the windows behind the overlay,
+            // and the Win2D swap chain's per-pixel-alpha content (transparent
+            // ClearColor set in the ctor) draws the effects on top of that.
+            //
+            // Without this accent the WinUI 3 window is an OPAQUE redirection
+            // surface, so the transparent Win2D swap chain is composited over an
+            // opaque black backing and the whole screen shows solid black.
+            ApplyTransparency();
 
             PositionFullScreen();
         }
@@ -95,9 +100,38 @@ namespace MouseBeautifier
                 | NativeMethods.WS_EX_TRANSPARENT
                 | NativeMethods.WS_EX_TOPMOST
                 | NativeMethods.WS_EX_NOACTIVATE;
-            // Remove WS_EX_LAYERED if present — it breaks Win2D alpha compositing.
+            // Remove WS_EX_LAYERED if present — it breaks Win2D alpha compositing
+            // and conflicts with the BLURBEHIND accent below.
             ex &= ~NativeMethods.WS_EX_LAYERED;
             NativeMethods.SetWindowLongPtr(_hwnd, NativeMethods.GWL_EXSTYLE, (IntPtr)ex);
+        }
+
+        /// <summary>
+        /// Applies a DWM "blur behind" accent so the windows beneath the overlay
+        /// show through. This is what makes the overlay transparent instead of a
+        /// solid black surface. The Win2D effects (transparent ClearColor) then
+        /// render on top of the blurred desktop.
+        /// </summary>
+        private void ApplyTransparency()
+        {
+            var accent = new NativeMethods.ACCENTPOLICY
+            {
+                nAccentState = NativeMethods.ACCENT_ENABLE_BLURBEHIND,
+                nFlags = 0,
+                nColor = 0,
+                nAnimationId = 0,
+            };
+            int size = Marshal.SizeOf<NativeMethods.ACCENTPOLICY>();
+            IntPtr p = Marshal.AllocHGlobal(size);
+            Marshal.StructureToPtr(accent, p, false);
+            var data = new NativeMethods.WINCOMPATTRDATA
+            {
+                nAttribute = NativeMethods.WCA_ACCENT_POLICY,
+                pData = p,
+                ulDataSize = size,
+            };
+            NativeMethods.SetWindowCompositionAttribute(_hwnd, ref data);
+            Marshal.FreeHGlobal(p);
         }
 
         /// <summary>
