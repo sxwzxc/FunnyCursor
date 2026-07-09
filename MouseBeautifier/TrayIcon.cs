@@ -6,9 +6,15 @@ namespace MouseBeautifier
     /// <summary>
     /// System-tray icon built on a message-only window. Left click / double click
     /// opens the panel; right click shows a context menu (open / exit).
+    /// Also owns the global "exit" hotkey (Ctrl+Shift+F10).
     /// </summary>
     internal sealed class TrayIcon : IDisposable
     {
+        private const int HOTKEY_ID_EXIT = 1;
+        // Ctrl+Shift+F10 — chosen because it's rarely used by other apps and easy to press.
+        private const uint HOTKEY_MODIFIERS = NativeMethods.MOD_CONTROL | NativeMethods.MOD_SHIFT | NativeMethods.MOD_NOREPEAT;
+        private const uint HOTKEY_VK = NativeMethods.VK_F10;
+
         private readonly string _className = "MouseBeautifierTray_" + Guid.NewGuid().ToString("N");
         private NativeMethods.WndProc _wndProc = null!;
         private IntPtr _hwnd;
@@ -59,6 +65,14 @@ namespace MouseBeautifier
                 : NativeMethods.LoadIcon(IntPtr.Zero, (IntPtr)NativeMethods.IDI_APPLICATION);
             _nid.hIcon = hIcon != IntPtr.Zero ? hIcon : NativeMethods.LoadIcon(IntPtr.Zero, (IntPtr)NativeMethods.IDI_APPLICATION);
             NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_ADD, ref _nid);
+
+            // Register a global hotkey for quick exit (Ctrl+Shift+F10).
+            if (!NativeMethods.RegisterHotKey(_hwnd, HOTKEY_ID_EXIT, HOTKEY_MODIFIERS, HOTKEY_VK))
+            {
+                // Fall back to Ctrl+Alt+Q if the default is taken.
+                NativeMethods.RegisterHotKey(_hwnd, HOTKEY_ID_EXIT,
+                    NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT | NativeMethods.MOD_NOREPEAT, 0x51 /*'Q'*/);
+            }
         }
 
         private IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
@@ -87,6 +101,17 @@ namespace MouseBeautifier
                 return IntPtr.Zero;
             }
 
+            // Global hotkey triggered (Ctrl+Shift+F10 or fallback Ctrl+Alt+Q).
+            if (msg == NativeMethods.WM_HOTKEY)
+            {
+                int id = wParam.ToInt32();
+                if (id == HOTKEY_ID_EXIT)
+                {
+                    ExitRequested?.Invoke();
+                    return IntPtr.Zero;
+                }
+            }
+
             return NativeMethods.DefWindowProc(hWnd, msg, wParam, lParam);
         }
 
@@ -94,7 +119,7 @@ namespace MouseBeautifier
         {
             IntPtr menu = NativeMethods.CreatePopupMenu();
             NativeMethods.AppendMenu(menu, NativeMethods.MF_STRING, 1, "打开面板");
-            NativeMethods.AppendMenu(menu, NativeMethods.MF_STRING, 2, "退出");
+            NativeMethods.AppendMenu(menu, NativeMethods.MF_STRING, 2, "退出 (Ctrl+Shift+F10)");
             NativeMethods.GetCursorPos(out var pt);
             NativeMethods.SetForegroundWindow(_hwnd);
             NativeMethods.TrackPopupMenu(menu,
@@ -109,6 +134,7 @@ namespace MouseBeautifier
             _disposed = true;
             if (_hwnd != IntPtr.Zero)
             {
+                NativeMethods.UnregisterHotKey(_hwnd, HOTKEY_ID_EXIT);
                 NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_DELETE, ref _nid);
                 NativeMethods.DestroyWindow(_hwnd);
                 NativeMethods.UnregisterClass(_className, _hInstance);

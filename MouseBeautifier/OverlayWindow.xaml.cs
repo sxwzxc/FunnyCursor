@@ -59,11 +59,14 @@ namespace MouseBeautifier
 
             ApplyWindowStyles();
 
-            // Make the window background fully transparent via DWM accent.
-            // nFlags=0 (no border drawing); nColor=0 (fully transparent ABGR).
+            // Make the window background transparent via DWM accent.
+            // ACCENT_ENABLE_BLURBEHIND with color=0 renders as a fully transparent
+            // background that lets the windows behind show through — unlike
+            // ACCENT_ENABLE_TRANSPARENTGRADIENT which only paints a translucent
+            // gradient (and still shows the window's default opaque backing).
             var accent = new NativeMethods.ACCENTPOLICY
             {
-                nAccentState = NativeMethods.ACCENT_ENABLE_TRANSPARENTGRADIENT,
+                nAccentState = NativeMethods.ACCENT_ENABLE_BLURBEHIND,
                 nFlags = 0,
                 nColor = 0,
             };
