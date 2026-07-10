@@ -188,6 +188,63 @@ namespace MouseBeautifier
         }
 
         // ---------- Rope + hanging icon ----------
+
+        /// <summary>
+        /// Pure-function pendant (悬挂物) layout. Computes where the icon should be
+        /// drawn so that its TIP is exactly at the rope's last point (Bob) and it
+        /// extends along the rope's end direction. This binds the pendant to the
+        /// rope both visually (tip == rope end, never detaches) and directionally
+        /// (extends along the rope, looking like the rope's final segment).
+        ///
+        /// Exposed as a public static pure function so --test-pendant can verify
+        /// the geometric contract without needing a live render surface.
+        /// </summary>
+        public readonly struct PendantState
+        {
+            public readonly Vector2 Tip;        // = rope's last point (Bob)
+            public readonly Vector2 Direction;  // unit vector along rope end direction
+            public readonly float AngleRad;     // rotation for Canvas (Atan2(dir.X, dir.Y))
+            public readonly Vector2 BaseCenter;  // far end of the pendant = Tip + Direction*Size
+
+            public PendantState(Vector2 tip, Vector2 dir, float size)
+            {
+                Tip = tip;
+                Direction = dir;
+                AngleRad = MathF.Atan2(dir.X, dir.Y);
+                BaseCenter = tip + dir * size;
+            }
+        }
+
+        /// <summary>
+        /// Compute the pendant transform from rope points + icon size.
+        /// Uses the LAST TWO segments' average direction for angle stability:
+        /// a single ~9px segment is noisy under fast swing, causing the triangle
+        /// to jitter. Averaging 2 segments smooths the direction without lag.
+        /// </summary>
+        public static PendantState ComputePendant(Vector2[] ropePoints, float iconSize)
+        {
+            if (ropePoints == null || ropePoints.Length < 2)
+                return new PendantState(Vector2.Zero, new Vector2(0, 1), iconSize);
+
+            Vector2 tip = ropePoints[ropePoints.Length - 1];
+            Vector2 dir;
+            if (ropePoints.Length >= 3)
+            {
+                // Average direction over the last 2 segments — much smoother than 1.
+                dir = ropePoints[ropePoints.Length - 1] - ropePoints[ropePoints.Length - 3];
+            }
+            else
+            {
+                dir = ropePoints[ropePoints.Length - 1] - ropePoints[ropePoints.Length - 2];
+            }
+            float len = dir.Length();
+            if (len < 1e-4f)
+                dir = new Vector2(0, 1); // default: hang straight down
+            else
+                dir /= len;
+            return new PendantState(tip, dir, iconSize);
+        }
+
         private void DrawRope(CanvasDrawingSession session, AppSettings s)
         {
             var pts = _rope.Points;
@@ -212,78 +269,133 @@ namespace MouseBeautifier
                     session.DrawLine(pts[i], pts[i + 1], c, w, stroke);
             }
 
-            var bob = _rope.Bob;
-
-            // The pendant rotates to match the rope's LAST segment direction exactly,
-            // so it always looks tied to the end of the rope (no independent lean
-            // that would make it appear detached).
-            var dir = pts[^1] - pts[^2];
-            double finalAngle = Math.Atan2(dir.X, dir.Y) * 180 / Math.PI;
+            // Pendant layout: tip == rope end (Bob), extends along rope direction.
+            // This is the KEY fix: the pendant's tip is literally the rope's last
+            // point, so it can NEVER detach from the rope regardless of motion.
+            var pendant = ComputePendant(pts, (float)s.IconSize);
 
             var icon = GetImageIcon(s.IconType);
-            // SVG is unsupported by the layered overlay, so any SVG custom icon
-            // falls through to the built-in vector shape below.
             bool hasBitmap = icon != null && icon.SvgSource == null && icon.Frames != null;
             if (hasBitmap)
             {
-                float half = (float)(s.IconSize / 2);
+                // Bitmap icons: draw centered on the tip but offset so the image's
+                // top edge sits at the rope end (hangs below the rope).
                 float size = (float)s.IconSize;
+                float half = size / 2f;
 
                 var saved = session.Transform;
-                session.Transform = Matrix3x2.CreateTranslation(bob) *
-                                    Matrix3x2.CreateRotation((float)(finalAngle * Math.PI / 180f));
+                session.Transform = Matrix3x2.CreateTranslation(pendant.Tip) *
+                                    Matrix3x2.CreateRotation(pendant.AngleRad);
 
                 var frame = icon.GetFrame(_animTime);
                 if (frame != null)
                 {
-                    var dst = new Rect(-half, -half, size, size);
+                    // Local space: tip at (0,0), image spans [0, size] in +Y (along rope).
+                    var dst = new Rect(-half, 0, size, size);
                     var src = new Rect(0, 0, frame.Size.Width, frame.Size.Height);
-                    // Default CanvasAlphaMode (Premultiplied) keeps PNG / GIF transparency correct.
                     session.DrawImage(frame, dst, src, 1.0f, CanvasImageInterpolation.HighQualityCubic);
                 }
                 session.Transform = saved;
             }
             else
             {
-                DrawBuiltinIcon(session, bob, (float)finalAngle, s);
+                DrawBuiltinIcon(session, pendant, s);
             }
         }
 
-        private void DrawBuiltinIcon(CanvasDrawingSession session, Vector2 center, float angleDeg, AppSettings s)
+        private void DrawBuiltinIcon(CanvasDrawingSession session, in PendantState p, AppSettings s)
         {
             var color = ColorsUtil.Parse(s.IconColor);
-            float r = (float)(s.IconSize / 2);
+            float size = (float)s.IconSize;
 
             var saved = session.Transform;
-            session.Transform = Matrix3x2.CreateTranslation(center) *
-                                Matrix3x2.CreateRotation(angleDeg * (float)Math.PI / 180f);
+            // Transform: origin = tip, +Y axis = rope end direction.
+            // The shape is drawn in local space with its TIP at (0,0) and extends
+            // in +Y, so after rotation it always points along the rope.
+            session.Transform = Matrix3x2.CreateTranslation(p.Tip) *
+                                Matrix3x2.CreateRotation(p.AngleRad);
 
             switch (s.IconType)
             {
                 case "circle":
-                    session.FillCircle(0, 0, r, color);
+                    // Circle hangs below the tip: center at (0, size/2).
+                    session.FillCircle(0, size / 2f, size / 2f, color);
                     break;
                 case "square":
-                    session.FillRectangle(-r, -r, r * 2, r * 2, color);
+                    // Square hangs below the tip.
+                    session.FillRectangle(-size / 2f, 0, size, size, color);
                     break;
                 case "triangle":
-                    FillPolygon(session, color, r, 3, -90);
+                    // Triangle: tip at origin, base at y=size. This makes it look
+                    // like the rope narrows into a triangle point — "a rope whose
+                    // bottom end IS a triangle" per the user's request.
+                    FillTriangleTip(session, color, size);
                     break;
                 case "diamond":
-                    FillPolygon(session, color, r, 4, -90);
+                    // Diamond: tip at origin, widest at y=size/2, bottom point at y=size.
+                    FillDiamondTip(session, color, size);
                     break;
                 case "heart":
-                    DrawHeart(session, color, r);
+                    DrawHeart(session, color, size / 2f, size);
                     break;
                 case "smiley":
-                    DrawSmiley(session, color, r);
+                    DrawSmiley(session, color, size / 2f, size);
                     break;
                 case "star":
                 default:
-                    FillStar(session, color, r);
+                    FillStarTip(session, color, size);
                     break;
             }
             session.Transform = saved;
+        }
+
+        /// <summary>Triangle with tip at (0,0), base at y=size. Width = size*0.9.</summary>
+        private static void FillTriangleTip(CanvasDrawingSession s, Color c, float size)
+        {
+            float halfW = size * 0.5f;
+            var pts = new Vector2[]
+            {
+                new Vector2(0, 0),        // tip (at rope end)
+                new Vector2(-halfW, size), // base left
+                new Vector2(halfW, size),  // base right
+            };
+            using var geo = CanvasGeometry.CreatePolygon(s, pts);
+            s.FillGeometry(geo, c);
+        }
+
+        /// <summary>Diamond: tip at (0,0), widest at y=size/2, bottom at y=size.</summary>
+        private static void FillDiamondTip(CanvasDrawingSession s, Color c, float size)
+        {
+            float halfW = size * 0.5f;
+            var pts = new Vector2[]
+            {
+                new Vector2(0, 0),           // top tip
+                new Vector2(halfW, size/2f), // right
+                new Vector2(0, size),        // bottom tip
+                new Vector2(-halfW, size/2f),// left
+            };
+            using var geo = CanvasGeometry.CreatePolygon(s, pts);
+            s.FillGeometry(geo, c);
+        }
+
+        /// <summary>Star anchored by its top tip at (0,0), extends in +Y.</summary>
+        private static void FillStarTip(CanvasDrawingSession s, Color c, float size)
+        {
+            int points = 5;
+            var pts = new Vector2[points * 2];
+            float outer = size * 0.5f;
+            float inner = outer * 0.45f;
+            // Center the star at (0, size/2) so its top tip sits at the rope end,
+            // then it extends downward to y = size.
+            float cx = 0, cy = size / 2f;
+            for (int i = 0; i < points * 2; i++)
+            {
+                float rad = (i % 2 == 0) ? outer : inner;
+                double a = -Math.PI / 2 + i * Math.PI / points;
+                pts[i] = new Vector2(cx + (float)(Math.Cos(a) * rad), cy + (float)(Math.Sin(a) * rad));
+            }
+            using var geo = CanvasGeometry.CreatePolygon(s, pts);
+            s.FillGeometry(geo, c);
         }
 
         private static void FillPolygon(CanvasDrawingSession s, Color c, float r, int sides, float startDeg)
@@ -314,36 +426,38 @@ namespace MouseBeautifier
             s.FillGeometry(geo, c);
         }
 
-        private static void DrawHeart(CanvasDrawingSession s, Color c, float r)
+        private static void DrawHeart(CanvasDrawingSession s, Color c, float r, float size)
         {
             var pts = new Vector2[40];
+            float cy = size / 2f; // center below the tip
             for (int i = 0; i < pts.Length; i++)
             {
                 double t = i * 2 * Math.PI / pts.Length;
                 double x = 16 * Math.Pow(Math.Sin(t), 3);
                 double y = 13 * Math.Cos(t) - 5 * Math.Cos(2 * t) - 2 * Math.Cos(3 * t) - Math.Cos(4 * t);
-                pts[i] = new Vector2((float)(x / 16 * r), (float)(-y / 16 * r));
+                pts[i] = new Vector2((float)(x / 16 * r), cy + (float)(-y / 16 * r));
             }
             using var geo = CanvasGeometry.CreatePolygon(s, pts);
             s.FillGeometry(geo, c);
         }
 
-        private static void DrawSmiley(CanvasDrawingSession s, Color c, float r)
+        private static void DrawSmiley(CanvasDrawingSession s, Color c, float r, float size)
         {
-            s.FillCircle(0, 0, r, c);
+            float cy = size / 2f; // center below the tip
+            s.FillCircle(0, cy, r, c);
             var dark = ColorsUtil.Parse("#FF333333");
-            s.FillCircle(-r * 0.35f, -r * 0.2f, r * 0.12f, dark);
-            s.FillCircle(r * 0.35f, -r * 0.2f, r * 0.12f, dark);
+            s.FillCircle(-r * 0.35f, cy - r * 0.2f, r * 0.12f, dark);
+            s.FillCircle(r * 0.35f, cy - r * 0.2f, r * 0.12f, dark);
 
             // smile = lower arc (downward bulge in screen coords)
             int n = 16;
             var mouth = new Vector2[n + 1];
             float R = r * 0.55f;
-            float cy = -r * 0.1f;
+            float mcy = cy - r * 0.1f;
             for (int i = 0; i <= n; i++)
             {
                 double a = (20 + 140.0 * i / n) * Math.PI / 180; // 20deg .. 160deg
-                mouth[i] = new Vector2((float)(Math.Cos(a) * R), cy + (float)(Math.Sin(a) * R));
+                mouth[i] = new Vector2((float)(Math.Cos(a) * R), mcy + (float)(Math.Sin(a) * R));
             }
             for (int i = 1; i <= n; i++)
                 s.DrawLine(mouth[i - 1].X, mouth[i - 1].Y, mouth[i].X, mouth[i].Y, dark, r * 0.1f);

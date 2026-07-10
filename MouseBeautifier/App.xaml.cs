@@ -43,6 +43,12 @@ namespace MouseBeautifier
             {
                 return RopePhysicsTests.Run();
             }
+            // Pendant (triangle) binding tests: verifies the triangle's tip stays
+            // glued to the rope end and never detaches under motion.
+            if (args.Length > 0 && args[0] == "--test-pendant")
+            {
+                return PendantTests.Run();
+            }
 
             Log("Main start");
             AppDomain.CurrentDomain.UnhandledException += (_, e) =>
