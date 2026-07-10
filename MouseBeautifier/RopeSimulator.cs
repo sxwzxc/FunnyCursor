@@ -4,27 +4,33 @@ using System.Numerics;
 namespace MouseBeautifier
 {
     /// <summary>
-    /// Verlet-integrated rope. The top point is pinned to the cursor; the rest hang
-    /// under gravity and swing according to the cursor's velocity / acceleration.
+    /// Verlet-integrated rope. Point 0 is pinned to the cursor; the rest hang
+    /// under gravity and swing naturally according to the cursor's motion.
     ///
-    /// Stability technique: when the anchor (cursor) moves, the ENTIRE rope is
-    /// translated by the same delta BEFORE integration. Without this, a fast cursor
-    /// movement leaves the rope far behind the anchor, and the constraint solver
-    /// yanks each point back — but updates only _pos, not _prev. The next frame's
-    /// Verlet velocity = _pos - _prev then contains that huge correction, launching
-    /// the points past the anchor (the "bob flies off" bug). Translating the whole
-    /// rope keeps its shape relative to the cursor constant, so corrections stay
-    /// small and velocities stay sane.
+    /// Stability strategy (without killing physics):
+    ///   1. Anchor interpolation — across substeps the anchor moves in small
+    ///      increments, so constraint corrections stay small and never inject
+    ///      huge velocities.
+    ///   2. Per-step velocity clamp — caps the Verlet velocity to a fraction of
+    ///      the segment length, so even if a constraint correction slips through,
+    ///      it can never launch a point across the screen.
+    ///   3. Max-distance safety net — hard clamps any point beyond the rope's
+    ///      total length back toward the anchor.
+    ///
+    /// NOTE: The previous version translated the ENTIRE rope by the anchor delta
+    /// each frame. That prevented the "fly off" bug but also made the rope rigidly
+    /// follow the cursor with zero swing — it looked like a dead straight line.
+    /// The approach below keeps stability AND restores pendulum-like swing physics.
     /// </summary>
     public sealed class RopeSimulator
     {
         private Vector2[] _pos = Array.Empty<Vector2>();
         private Vector2[] _prev = Array.Empty<Vector2>();
-        private int _n; // number of segments => _n+1 points
+        private int _n;          // segment count => _n+1 points
         private float _segLen;
         private float _gravity;
-        private float _damping;
-        private float _stiffness;
+        private float _damping;  // 0.5..0.999 (higher = less air drag)
+        private float _stiffness;// 0..1 (higher = more constraint iterations)
         private Vector2 _lastAnchor;
         private bool _anchored;
 
@@ -39,11 +45,13 @@ namespace MouseBeautifier
             if (segs != _n || _pos.Length == 0)
             {
                 _n = segs;
-                _pos = new Vector2[_n + 1];
+                _pos  = new Vector2[_n + 1];
                 _prev = new Vector2[_n + 1];
+                // Place rope hanging straight down from origin; repositioned to
+                // the real anchor on the first Update call.
                 for (int i = 0; i <= _n; i++)
                 {
-                    _pos[i] = new Vector2(0, i * _segLen);
+                    _pos[i]  = new Vector2(0, i * _segLen);
                     _prev[i] = _pos[i];
                 }
                 _anchored = false;
@@ -55,57 +63,65 @@ namespace MouseBeautifier
             if (s.RopeSegments != _n || _pos.Length == 0)
                 ApplySettings(s);
 
-            // First-time init: snap the rope to the anchor so there's no huge
-            // initial delta that would launch it.
+            // First-time init: snap the rope to hang straight down from the anchor.
             if (!_anchored)
-            {
-                _lastAnchor = anchor;
-                _anchored = true;
-            }
-
-            // Translate the entire rope by the anchor's movement since last frame.
-            // This is the KEY fix: it keeps the rope's shape relative to the cursor
-            // constant, so the constraint solver never has to close a large gap.
-            Vector2 delta = anchor - _lastAnchor;
-            if (delta.X != 0 || delta.Y != 0)
             {
                 for (int i = 0; i <= _n; i++)
                 {
-                    _pos[i] += delta;
-                    _prev[i] += delta;
+                    _pos[i]  = anchor + new Vector2(0, i * _segLen);
+                    _prev[i] = _pos[i];
                 }
+                _lastAnchor = anchor;
+                _anchored = true;
+                return; // skip the first frame so velocities start at zero
+            }
+
+            // Clamp dt to avoid pathological steps after a stall / debugger pause.
+            double h = Math.Min(dt, 1.0 / 30.0);
+
+            // Sub-step for stability. The anchor is interpolated across substeps
+            // so no single step ever sees a large anchor jump — this is what
+            // keeps constraint corrections (and therefore induced velocities) small.
+            const double maxStep = 1.0 / 240.0;
+            int substeps = Math.Max(1, (int)Math.Ceiling(h / maxStep));
+            substeps = Math.Min(substeps, 16);
+            double sub = h / substeps;
+
+            Vector2 anchorStart = _lastAnchor;
+            for (int step = 0; step < substeps; step++)
+            {
+                float t = (step + 1) / (float)substeps;
+                Vector2 interpAnchor = anchorStart + (anchor - anchorStart) * t;
+                IntegrateStep(sub, interpAnchor);
             }
             _lastAnchor = anchor;
-
-            // Sub-step the integration for stability under frame-rate variation.
-            const double maxStep = 1.0 / 120.0;
-            int substeps = Math.Max(1, (int)Math.Ceiling(dt / maxStep));
-            substeps = Math.Min(substeps, 8); // cap to avoid perf cliff
-            double h = dt / substeps;
-
-            for (int step = 0; step < substeps; step++)
-                IntegrateStep(h, anchor);
         }
 
         private void IntegrateStep(double h, Vector2 anchor)
         {
-            // Pin anchor (top of rope = cursor).
-            _pos[0] = anchor;
-            _prev[0] = anchor;
-
             float g = _gravity * (float)(h * h);
             float damp = MathF.Pow(_damping, (float)(h * 60f));
 
+            // Max velocity per step = 1.5 * segment length. This prevents the
+            // "fly off" explosion without killing natural swing motion.
+            float maxVel = _segLen * 1.5f;
+
+            // Verlet integration for free points (1..n). Point 0 is pinned.
             for (int i = 1; i <= _n; i++)
             {
-                var cur = _pos[i];
                 var vel = (_pos[i] - _prev[i]) * damp;
-                var next = cur + vel + new Vector2(0, g);
-                _prev[i] = cur;
-                _pos[i] = next;
+                float vl = vel.Length();
+                if (vl > maxVel)
+                    vel *= maxVel / vl;
+                _prev[i] = _pos[i];
+                _pos[i]  = _pos[i] + vel + new Vector2(0, g);
             }
 
-            // Distance constraints (iterate; more iterations => stiffer rope).
+            // Pin the anchor (top of rope = cursor).
+            _pos[0]  = anchor;
+            _prev[0] = anchor;
+
+            // Distance constraints — more iterations => stiffer rope.
             int iters = 16 + (int)(_stiffness * 32);
             for (int k = 0; k < iters; k++)
             {
@@ -121,21 +137,19 @@ namespace MouseBeautifier
                     var offset = d * (0.5f * diff);
                     if (i == 0)
                     {
-                        // anchor fixed -> move only the child
+                        // anchor is fixed -> move only the child point
                         _pos[i + 1] -= offset * 2f;
                     }
                     else
                     {
-                        _pos[i] += offset;
+                        _pos[i]     += offset;
                         _pos[i + 1] -= offset;
                     }
                 }
                 _pos[0] = anchor;
             }
 
-            // Safety clamp: never let any point wander more than the rope's total
-            // length from the anchor. Belt-and-suspenders in case a pathological
-            // sequence of frames outran the solver.
+            // Safety clamp: never let any point wander beyond the rope's total length.
             float maxDist = _n * _segLen * 1.1f;
             for (int i = 1; i <= _n; i++)
             {
@@ -143,7 +157,7 @@ namespace MouseBeautifier
                 float d = rel.Length();
                 if (d > maxDist)
                 {
-                    _pos[i] = anchor + rel * (maxDist / d);
+                    _pos[i]  = anchor + rel * (maxDist / d);
                     _prev[i] = _pos[i];
                 }
             }

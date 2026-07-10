@@ -292,6 +292,7 @@ namespace MouseBeautifier
         // ---- Font (modern Segoe UI for the settings panel) ----
         public const int WM_SETFONT = 0x0030;
         public const int FW_NORMAL = 400;
+        public const int FW_SEMIBOLD = 600;
         public const int DEFAULT_CHARSET = 1;
         public const int OUT_TT_PRECIS = 4;
         public const int CLIP_DEFAULT_PRECIS = 0;
@@ -305,5 +306,143 @@ namespace MouseBeautifier
             int fnWeight, int fdwItalic, int fdwUnderline, int fdwStrikeOut,
             int fdwCharSet, int fdwOutputPrecision, int fdwClipPrecision,
             int fdwQuality, int fdwPitchAndFamily, string lpszFace);
+
+        // ---- Owner-draw + theming support ----
+        public const int BS_OWNERDRAW = 0x000B;
+        public const int SS_OWNERDRAW = 0x000B;
+
+        public const int WM_DRAWITEM = 0x002B;
+        public const int WM_CTLCOLORDLG = 0x0136;
+        public const int WM_CTLCOLORSTATIC = 0x0138;
+        public const int WM_CTLCOLORBTN = 0x0135;
+        public const int WM_CTLCOLOR_EDIT = 0x0133;
+        public const int WM_MOUSEMOVE = 0x0200;
+        public const int WM_MOUSELEAVE = 0x02A3;
+
+        // DRAWITEMSTRUCT.CtlType
+        public const uint ODT_BUTTON = 4;
+        public const uint ODT_STATIC = 1;
+        // DRAWITEMSTRUCT.itemAction
+        public const uint ODA_DRAWENTIRE = 0x0001;
+        public const uint ODA_SELECT = 0x0002;
+        // DRAWITEMSTRUCT.itemState
+        public const uint ODS_SELECTED = 0x0001;
+        public const uint ODS_FOCUS = 0x0010;
+        public const uint ODS_HOTLIGHT = 0x0040;
+        public const uint ODS_CHECKED = 0x0008;
+
+        // DrawText format flags
+        public const int DT_CENTER = 0x0001;
+        public const int DT_VCENTER = 0x0004;
+        public const int DT_SINGLELINE = 0x0020;
+        public const int DT_LEFT = 0x0000;
+        public const int DT_NOPREFIX = 0x0800;
+
+        // SetBkMode
+        public const int TRANSPARENT = 1;
+        public const int OPAQUE = 2;
+
+        // PS_SOLID
+        public const int PS_SOLID = 0;
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct DRAWITEMSTRUCT
+        {
+            public uint CtlType;
+            public uint CtlID;
+            public int itemID;
+            public uint itemAction;
+            public uint itemState;
+            public IntPtr hwndItem;
+            public IntPtr hdc;
+            public RECT rcItem;
+            public IntPtr itemData;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct TRACKMOUSEEVENT
+        {
+            public uint cbSize;
+            public uint dwFlags;
+            public IntPtr hwndTrack;
+            public uint dwHoverTime;
+        }
+        public const uint TME_LEAVE = 0x0002;
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool TrackMouseEvent(ref TRACKMOUSEEVENT lpEventTrack);
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        public static extern IntPtr GetParent(IntPtr hWnd);
+
+        // ---- GDI drawing helpers ----
+        [DllImport("gdi32.dll")]
+        public static extern IntPtr CreateSolidBrush(int crColor);
+
+        [DllImport("gdi32.dll")]
+        public static extern bool DeleteObject(IntPtr hObject);
+
+        [DllImport("user32.dll")]
+        public static extern int FillRect(IntPtr hDC, ref RECT lprc, IntPtr hbr);
+
+        [DllImport("gdi32.dll")]
+        public static extern int SetBkMode(IntPtr hdc, int iBkMode);
+
+        [DllImport("gdi32.dll")]
+        public static extern int SetBkColor(IntPtr hdc, int crColor);
+
+        [DllImport("gdi32.dll")]
+        public static extern int SetTextColor(IntPtr hdc, int crColor);
+
+        [DllImport("gdi32.dll")]
+        public static extern IntPtr SelectObject(IntPtr hdc, IntPtr hgdiobj);
+
+        [DllImport("gdi32.dll")]
+        public static extern IntPtr CreatePen(int fnPenStyle, int nWidth, int crColor);
+
+        [DllImport("gdi32.dll")]
+        public static extern bool Rectangle(IntPtr hdc, int left, int top, int right, int bottom);
+
+        [DllImport("gdi32.dll")]
+        public static extern bool MoveToEx(IntPtr hdc, int X, int Y, IntPtr lpPoint);
+
+        [DllImport("gdi32.dll")]
+        public static extern bool LineTo(IntPtr hdc, int nXEnd, int nYEnd);
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        public static extern int DrawText(IntPtr hDC, string lpString, int nCount, ref RECT lpRect, int uFormat);
+
+        [DllImport("gdi32.dll")]
+        public static extern IntPtr GetStockObject(int fnObject);
+        public const int NULL_BRUSH = 5;
+        public const int SYSTEM_FONT = 13;
+
+        [DllImport("gdi32.dll")]
+        public static extern int GetDeviceCaps(IntPtr hdc, int nIndex);
+
+        [DllImport("user32.dll")]
+        public static extern bool InvalidateRect(IntPtr hWnd, IntPtr lpRect, bool bErase);
+
+        [DllImport("user32.dll")]
+        public static extern bool RedrawWindow(IntPtr hWnd, IntPtr lprcUpdate, IntPtr hrgnUpdate, uint flags);
+        public const uint RDW_INVALIDATE = 0x0001;
+        public const uint RDW_UPDATENOW = 0x0100;
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+        [DllImport("user32.dll")]
+        public static extern bool ScreenToClient(IntPtr hWnd, ref POINT lpPoint);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct POINT
+        {
+            public int X;
+            public int Y;
+        }
+
+        [DllImport("user32.dll")]
+        public static extern short GetKeyState(int nVirtKey);
+        public const int VK_LBUTTON = 0x01;
     }
 }

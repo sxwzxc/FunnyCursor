@@ -6,28 +6,39 @@ using System.Text;
 namespace MouseBeautifier
 {
     /// <summary>
-    /// Settings dialog implemented with raw Win32 (no WinUI XAML). WinUI's themed
-    /// controls require framework theme resources that cannot be deployed in this
-    /// self-contained build (PRI generation is disabled because the sandbox lacks
-    /// Visual Studio's AppxPackage tooling). Win32 common controls render via the OS
-    /// and need no such resources, so the panel stays fully functional.
+    /// Modern flat-style settings dialog built with raw Win32 + comctl32 v6
+    /// visual styles. Owner-draw buttons/checkboxes for a clean Windows 10 look:
+    /// section headers with accent underline, flat accent-colored buttons, and
+    /// modern checkboxes. No GroupBox borders, no 3D bevels.
     /// </summary>
     internal static class SettingsDialog
     {
-        private const int DLG_W = 520;
-        private const int GROUP_X = 8;
-        private const int GROUP_W = 504;
-        private const int LBL_X = 18;
-        private const int CTRL_X = 150;
-        private const int TRACK_W = 220;
-        private const int VAL_X = 378;
-        private const int ROW_H = 22;
-        private const int GROUP_TOP = 18;   // caption area inside a group box
-        private const int GROUP_PAD = 8;    // bottom padding inside a group box
+        // ---- Layout ----
+        private const int DLG_W = 540;
+        private const int MARGIN = 24;
+        private const int SECTION_W = DLG_W - 2 * MARGIN;   // 492
+        private const int LBL_X = MARGIN;
+        private const int LBL_W = 140;
+        private const int CTRL_X = LBL_X + LBL_W + 8;        // 172
+        private const int TRACK_W = 160;
+        private const int VAL_X = CTRL_X + TRACK_W + 8;       // 340
+        private const int VAL_W = 70;
+        private const int ROW_H = 26;
+        private const int SECTION_GAP = 8;
+        private const int SECTION_HEADER_H = 34;  // title 22 + line 2 + padding
 
-        // control ids
-        private const int ID_GRP_CLICK = 10, ID_GRP_ROPE = 11, ID_GRP_TRAIL = 12,
-            ID_GRP_ORBIT = 13, ID_GRP_GLOW = 14, ID_GRP_GENERAL = 15, ID_GRP_ABOUT = 16;
+        // ---- Colors (COLORREF = 0x00BBGGRR) ----
+        private const int CLR_ACCENT       = 0x00D47800; // #0078D4
+        private const int CLR_ACCENT_LIGHT = 0x00FFF1E5; // #E5F1FF (hover bg)
+        private const int CLR_BG           = 0x00FFFFFF; // white
+        private const int CLR_TEXT         = 0x001F1F1F; // near-black
+        private const int CLR_TEXT_DIM     = 0x00757575; // secondary gray
+        private const int CLR_BORDER       = 0x00E0E0E0; // light gray
+        private const int CLR_WHITE        = 0x00FFFFFF;
+
+        // ---- Control IDs (unchanged) ----
+        private const int ID_HDR_CLICK = 20, ID_HDR_ROPE = 21, ID_HDR_TRAIL = 22,
+            ID_HDR_ORBIT = 23, ID_HDR_GLOW = 24, ID_HDR_GENERAL = 25, ID_HDR_ABOUT = 26;
         private const int ID_CHK_CLICK = 100, ID_CHK_ROPE = 101, ID_CHK_TRAIL = 102,
             ID_CHK_ORBIT = 103, ID_CHK_GLOW = 104, ID_CHK_STARTUP = 105;
         private const int ID_CMB_PRESET = 200, ID_CMB_ICON = 201;
@@ -45,7 +56,7 @@ namespace MouseBeautifier
         private static readonly string[] PresetVals = { "sparkle", "confetti", "ring", "ripple" };
         private static readonly string[] PresetDisp = { "闪烁粒子", "彩色纸屑", "扩散光环", "水波纹" };
         private static readonly string[] IconVals = { "star", "circle", "square", "triangle", "diamond", "heart", "smiley", "pig", "girl", "custom" };
-        private static readonly string[] IconDisp = { "五角星", "圆形", "方形", "三角", "菱形", "心形", "笑脸", "🐷 粉色小猪", "👧 二次元女孩", "自定义图片" };
+        private static readonly string[] IconDisp = { "五角星", "圆形", "方形", "三角", "菱形", "心形", "笑脸", "粉色小猪", "二次元女孩", "自定义图片" };
 
         private static readonly string _className = "MouseBeautifierSettings_" + Guid.NewGuid().ToString("N");
         private static DlgNative.WndProc _wndProc = null!;
@@ -58,9 +69,20 @@ namespace MouseBeautifier
         private static int _contentHeight;
         private static readonly int[] _custColors = new int[16];
         private static GCHandle _custColorsHandle;
-        // Modern UI font (Segoe UI 9pt) applied to every child control so the panel
-        // doesn't render with the default ugly System/MS Sans Serif bitmap font.
-        private static IntPtr _hFont;
+
+        // Fonts
+        private static IntPtr _hFont;      // Segoe UI 9pt (body)
+        private static IntPtr _hFontBold;  // Segoe UI Semibold 12pt (section headers)
+
+        // Background brush (persisted, returned from WM_CTLCOLOR)
+        private static IntPtr _hbrBg;
+
+        // Owner-draw control tracking — which IDs are which type
+        private static readonly HashSet<int> _checkBoxIds = new();
+        private static readonly HashSet<int> _buttonIds = new();
+        private static readonly HashSet<int> _colorButtonIds = new();
+        private static readonly HashSet<int> _headerLineIds = new();
+        private static readonly HashSet<int> _headerTextIds = new();
 
         public static event Action? ExitRequested;
 
@@ -85,13 +107,14 @@ namespace MouseBeautifier
 
             if (!_classRegistered)
             {
+                // White background for a clean modern look
                 var wc = new DlgNative.WNDCLASSEX
                 {
                     cbSize = (uint)Marshal.SizeOf<DlgNative.WNDCLASSEX>(),
                     style = 0,
                     lpfnWndProc = Marshal.GetFunctionPointerForDelegate(_wndProc),
                     hInstance = _hInstance,
-                    hbrBackground = (IntPtr)(5 + 1), // COLOR_WINDOW + 1
+                    hbrBackground = DlgNative.CreateSolidBrush(CLR_BG),
                     lpszClassName = _className,
                 };
                 DlgNative.RegisterClassEx(ref wc);
@@ -106,9 +129,7 @@ namespace MouseBeautifier
 
             DlgNative.ShowWindow(_hwnd, DlgNative.SW_SHOW);
 
-            // Create a modern Segoe UI 9pt font once; applied to every child in
-            // CreateChild via WM_SETFONT. This is the single biggest visual fix:
-            // the default Win32 control font is the ancient bitmap System font.
+            // Create fonts + background brush once
             if (_hFont == IntPtr.Zero)
             {
                 _hFont = DlgNative.CreateFont(
@@ -117,8 +138,18 @@ namespace MouseBeautifier
                     DlgNative.CLIP_DEFAULT_PRECIS, DlgNative.CLEARTYPE_QUALITY,
                     DlgNative.DEFAULT_PITCH | DlgNative.FF_DONTCARE, "Segoe UI");
             }
+            if (_hFontBold == IntPtr.Zero)
+            {
+                _hFontBold = DlgNative.CreateFont(
+                    -16, 0, 0, 0, DlgNative.FW_SEMIBOLD, 0, 0, 0,
+                    DlgNative.DEFAULT_CHARSET, DlgNative.OUT_TT_PRECIS,
+                    DlgNative.CLIP_DEFAULT_PRECIS, DlgNative.CLEARTYPE_QUALITY,
+                    DlgNative.DEFAULT_PITCH | DlgNative.FF_DONTCARE, "Segoe UI Semibold");
+            }
+            if (_hbrBg == IntPtr.Zero)
+                _hbrBg = DlgNative.CreateSolidBrush(CLR_BG);
 
-            // Set window icon (title bar) to the custom app icon.
+            // Window icon
             string baseDir = System.IO.Path.GetDirectoryName(typeof(SettingsDialog).Assembly.Location) ?? "";
             string icoPath = System.IO.Path.Combine(baseDir, "Assets", "funnycursor.ico");
             if (System.IO.File.Exists(icoPath))
@@ -150,9 +181,25 @@ namespace MouseBeautifier
                 case DlgNative.WM_VSCROLL:
                     OnVScroll(hWnd, wParam);
                     return IntPtr.Zero;
+                case DlgNative.WM_DRAWITEM:
+                    OnDrawItem(lParam);
+                    return (IntPtr)1;
+                case DlgNative.WM_CTLCOLORDLG:
+                    return _hbrBg;
+                case DlgNative.WM_CTLCOLORSTATIC:
+                case DlgNative.WM_CTLCOLORBTN:
+                    DlgNative.SetBkMode(wParam, DlgNative.TRANSPARENT);
+                    if (_headerTextIds.Contains(DlgNative.GetDlgCtrlID(lParam)))
+                        DlgNative.SetTextColor(wParam, CLR_TEXT);
+                    else
+                        DlgNative.SetTextColor(wParam, CLR_TEXT_DIM);
+                    return _hbrBg;
+                case DlgNative.WM_CTLCOLOR_EDIT:
+                    DlgNative.SetBkMode(wParam, DlgNative.OPAQUE);
+                    DlgNative.SetBkColor(wParam, CLR_BG);
+                    DlgNative.SetTextColor(wParam, CLR_TEXT);
+                    return _hbrBg;
                 case DlgNative.WM_CLOSE:
-                    // Hide instead of destroy, so the window can be re-opened from the tray
-                    // without re-registering its window class.
                     DlgNative.ShowWindow(hWnd, DlgNative.SW_HIDE);
                     return IntPtr.Zero;
             }
@@ -164,10 +211,15 @@ namespace MouseBeautifier
         {
             _children.Clear();
             _valLabels.Clear();
+            _checkBoxIds.Clear();
+            _buttonIds.Clear();
+            _colorButtonIds.Clear();
+            _headerLineIds.Clear();
+            _headerTextIds.Clear();
             int y = 8;
 
-            // ---- 点击特效 (6 rows) ----
-            y = GroupStart(ID_GRP_CLICK, "点击特效", y, 6);
+            // ---- 点击特效 ----
+            y = SectionStart(hWnd, ID_HDR_CLICK, "点击特效", y);
             AddCheckBox(hWnd, ID_CHK_CLICK, "启用点击特效", ref y, SettingsManager.Current.EnableClickEffects);
             AddCombo(hWnd, ID_CMB_PRESET, "特效预设", ref y, PresetDisp, IndexOf(PresetVals, SettingsManager.Current.ClickPreset));
             AddColorButton(hWnd, ID_BTN_CLICKCOLOR, "特效颜色", ref y, SettingsManager.Current.ClickColor);
@@ -175,52 +227,52 @@ namespace MouseBeautifier
             AddTrack(hWnd, ID_TRK_CLICKSPEED, "喷射速度", ref y, 50, 2000, SettingsManager.Current.ClickSpeed);
             AddTrack(hWnd, ID_TRK_CLICKGRAV, "重力", ref y, 0, 3000, SettingsManager.Current.ClickGravity);
 
-            // ---- 悬挂绳子 + 图标 (11 rows) ----
-            y = GroupStart(ID_GRP_ROPE, "悬挂绳子 + 图标", y, 11);
+            // ---- 悬挂绳子 + 图标 ----
+            y = SectionStart(hWnd, ID_HDR_ROPE, "悬挂绳子 + 图标", y);
             AddCheckBox(hWnd, ID_CHK_ROPE, "启用绳子", ref y, SettingsManager.Current.EnableRope);
             AddTrack(hWnd, ID_TRK_ROPELEN, "绳子长度", ref y, 20, 500, SettingsManager.Current.RopeLength);
             AddTrack(hWnd, ID_TRK_ROPESEG, "绳子节数", ref y, 2, 40, SettingsManager.Current.RopeSegments);
             AddTrack(hWnd, ID_TRK_ROPEGRAV, "重力", ref y, 0, 3000, SettingsManager.Current.RopeGravity);
             AddTrackScaled(hWnd, ID_TRK_ROPEDAMP, "阻尼", ref y, 50, 99, SettingsManager.Current.RopeDamping, 100);
             AddTrackScaled(hWnd, ID_TRK_ROPESTIFF, "刚度", ref y, 10, 100, SettingsManager.Current.RopeStiffness, 100);
+            AddTrack(hWnd, ID_TRK_ROPEWIDTH, "绳子粗细", ref y, 1, 20, SettingsManager.Current.RopeWidth);
             AddCombo(hWnd, ID_CMB_ICON, "悬挂图标", ref y, IconDisp, IndexOf(IconVals, SettingsManager.Current.IconType));
             AddTrack(hWnd, ID_TRK_ICONSIZE, "图标大小", ref y, 10, 120, SettingsManager.Current.IconSize);
             AddColorButton(hWnd, ID_BTN_ICONCOLOR, "图标颜色", ref y, SettingsManager.Current.IconColor);
             AddColorButton(hWnd, ID_BTN_ROPECOLOR, "绳子颜色", ref y, SettingsManager.Current.RopeColor);
-            AddEdit(hWnd, ID_EDT_ICONPATH, "自定义图标路径 (PNG/SVG/GIF)", ref y, SettingsManager.Current.CustomIconPath, ID_BTN_BROWSE);
+            AddEdit(hWnd, ID_EDT_ICONPATH, "自定义图标路径", ref y, SettingsManager.Current.CustomIconPath, ID_BTN_BROWSE);
 
-            // ---- 光标拖尾 (4 rows) ----
-            y = GroupStart(ID_GRP_TRAIL, "光标拖尾", y, 4);
+            // ---- 光标拖尾 ----
+            y = SectionStart(hWnd, ID_HDR_TRAIL, "光标拖尾", y);
             AddCheckBox(hWnd, ID_CHK_TRAIL, "启用拖尾", ref y, SettingsManager.Current.EnableTrail);
             AddColorButton(hWnd, ID_BTN_TRAILCOLOR, "拖尾颜色", ref y, SettingsManager.Current.TrailColor);
             AddTrackScaled(hWnd, ID_TRK_TRAILLEN, "拖尾长度(秒)", ref y, 10, 200, SettingsManager.Current.TrailLength, 100);
             AddTrack(hWnd, ID_TRK_TRAILWIDTH, "拖尾宽度", ref y, 2, 40, SettingsManager.Current.TrailWidth);
 
-            // ---- 环绕粒子 (7 rows) ----
-            y = GroupStart(ID_GRP_ORBIT, "环绕粒子", y, 7);
+            // ---- 环绕粒子 ----
+            y = SectionStart(hWnd, ID_HDR_ORBIT, "环绕粒子", y);
             AddCheckBox(hWnd, ID_CHK_ORBIT, "启用环绕粒子", ref y, SettingsManager.Current.EnableOrbit);
             AddTrack(hWnd, ID_TRK_ORBITCOUNT, "粒子数量", ref y, 1, 60, SettingsManager.Current.OrbitCount);
             AddTrack(hWnd, ID_TRK_ORBITRAD, "环绕半径", ref y, 10, 200, SettingsManager.Current.OrbitRadius);
-            // Trackbar range must be non-negative (16-bit words), so map -360..360 -> 0..720.
             AddTrack(hWnd, ID_TRK_ORBITSPEED, "旋转速度(度/秒)", ref y, 0, 720, SettingsManager.Current.OrbitSpeed + 360);
             AddTrack(hWnd, ID_TRK_ORBITSIZE, "粒子大小", ref y, 2, 40, SettingsManager.Current.OrbitSize);
             AddColorButton(hWnd, ID_BTN_ORBITCOLOR, "粒子颜色", ref y, SettingsManager.Current.OrbitColor);
 
-            // ---- 光标光晕 (4 rows) ----
-            y = GroupStart(ID_GRP_GLOW, "光标光晕", y, 4);
+            // ---- 光标光晕 ----
+            y = SectionStart(hWnd, ID_HDR_GLOW, "光标光晕", y);
             AddCheckBox(hWnd, ID_CHK_GLOW, "启用光晕", ref y, SettingsManager.Current.EnableGlow);
             AddColorButton(hWnd, ID_BTN_GLOWCOLOR, "光晕颜色", ref y, SettingsManager.Current.GlowColor);
             AddTrack(hWnd, ID_TRK_GLOWSIZE, "光晕半径", ref y, 10, 200, SettingsManager.Current.GlowSize);
             AddTrackScaled(hWnd, ID_TRK_GLOWINT, "光晕强度", ref y, 0, 100, SettingsManager.Current.GlowIntensity, 100);
 
-            // ---- 常规 (3 rows) ----
-            y = GroupStart(ID_GRP_GENERAL, "常规", y, 3);
+            // ---- 常规 ----
+            y = SectionStart(hWnd, ID_HDR_GENERAL, "常规", y);
             AddCheckBox(hWnd, ID_CHK_STARTUP, "开机自启", ref y, SettingsManager.Current.StartWithWindows);
-            AddButton(hWnd, ID_BTN_RESET, "恢复默认设置", ref y, 150, 24);
-            AddButton(hWnd, ID_BTN_EXIT, "退出程序 (Ctrl+Shift+Q)", ref y, 200, 24);
+            AddButton(hWnd, ID_BTN_RESET, "恢复默认设置", ref y, 160, 28);
+            AddButton(hWnd, ID_BTN_EXIT, "退出程序 (Ctrl+Shift+Q)", ref y, 200, 28);
 
-            // ---- 关于 (5 rows) ----
-            y = GroupStart(ID_GRP_ABOUT, "关于", y, 5);
+            // ---- 关于 ----
+            y = SectionStart(hWnd, ID_HDR_ABOUT, "关于", y);
             AddInfoLabel(hWnd, "产品", $"{AppInfo.Product}", ref y);
             AddInfoLabel(hWnd, "版本", $"{AppInfo.Version}", ref y, ID_BTN_COPYVER, "复制");
             AddInfoLabel(hWnd, "作者", AppInfo.Author, ref y);
@@ -235,28 +287,39 @@ namespace MouseBeautifier
             _scroll = 0;
         }
 
-        private static int GroupStart(int id, string title, int y, int rows)
+        /// <summary>Creates a modern section header: bold title + accent underline.</summary>
+        private static int SectionStart(IntPtr parent, int titleId, string title, int y)
         {
-            int h = GROUP_TOP + rows * ROW_H + GROUP_PAD;
-            CreateChild(DlgNative.WC_BUTTON, title, id,
-                DlgNative.BS_GROUPBOX | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE,
-                GROUP_X, y, GROUP_W, h, IntPtr.Zero, 0);
-            return y + GROUP_TOP; // inner content starts below the group caption
+            // Bold header text
+            IntPtr hdr = CreateChild(DlgNative.WC_STATIC, title, titleId,
+                DlgNative.SS_LEFT | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE,
+                MARGIN, y, SECTION_W, 22, parent, 0);
+            DlgNative.SendMessage(hdr, DlgNative.WM_SETFONT, _hFontBold, (IntPtr)1);
+            _headerTextIds.Add(titleId);
+
+            // Accent underline (1px owner-draw static)
+            int lineId = titleId + 5000;
+            CreateChild(DlgNative.WC_STATIC, "", lineId,
+                DlgNative.SS_OWNERDRAW | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE,
+                MARGIN, y + 24, SECTION_W, 2, parent, 0);
+            _headerLineIds.Add(lineId);
+
+            return y + SECTION_HEADER_H;
         }
 
         private static void AddCheckBox(IntPtr parent, int id, string text, ref int y, bool a)
         {
             IntPtr c = CreateChild(DlgNative.WC_BUTTON, text, id,
-                DlgNative.BS_AUTOCHECKBOX | DlgNative.BS_LEFT | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE | DlgNative.WS_TABSTOP,
-                LBL_X, y, 300, 20, parent, 0);
+                DlgNative.BS_AUTOCHECKBOX | DlgNative.BS_OWNERDRAW | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE | DlgNative.WS_TABSTOP,
+                LBL_X, y + 2, SECTION_W - MARGIN, 22, parent, 0);
+            _checkBoxIds.Add(id);
             DlgNative.CheckDlgButton(parent, id, a ? 1u : 0u);
             y += ROW_H;
         }
 
         private static void AddCombo(IntPtr parent, int id, string label, ref int y, string[] items, int sel)
         {
-            CreateChild(DlgNative.WC_STATIC, label, 0,
-                DlgNative.SS_LEFT | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE, LBL_X, y + 2, 120, 18, parent, 0);
+            CreateLabel(parent, label, y);
             IntPtr cb = CreateChild(DlgNative.WC_COMBOBOX, "", id,
                 DlgNative.CBS_DROPDOWNLIST | DlgNative.CBS_HASSTRINGS | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE | DlgNative.WS_TABSTOP | DlgNative.WS_VSCROLL,
                 CTRL_X, y, 200, 22, parent, 0);
@@ -268,82 +331,85 @@ namespace MouseBeautifier
 
         private static void AddColorButton(IntPtr parent, int id, string label, ref int y, string hex)
         {
-            CreateChild(DlgNative.WC_STATIC, label, 0,
-                DlgNative.SS_LEFT | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE, LBL_X, y + 2, 120, 18, parent, 0);
+            CreateLabel(parent, label, y);
             CreateChild(DlgNative.WC_BUTTON, hex, id,
-                DlgNative.BS_PUSHBUTTON | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE | DlgNative.WS_TABSTOP,
-                CTRL_X, y, 200, 20, parent, 0);
+                DlgNative.BS_OWNERDRAW | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE | DlgNative.WS_TABSTOP,
+                CTRL_X, y, 160, 24, parent, 0);
+            _colorButtonIds.Add(id);
             y += ROW_H;
         }
 
         private static void AddEdit(IntPtr parent, int id, string label, ref int y, string text, int browseId)
         {
-            CreateChild(DlgNative.WC_STATIC, label, 0,
-                DlgNative.SS_LEFT | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE, LBL_X, y + 2, 120, 18, parent, 0);
+            CreateLabel(parent, label, y);
             IntPtr ed = CreateChild(DlgNative.WC_EDIT, text, id,
                 DlgNative.ES_AUTOHSCROLL | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE | DlgNative.WS_TABSTOP | DlgNative.WS_BORDER,
-                CTRL_X, y, 250, 20, parent, DlgNative.WS_EX_CLIENTEDGE);
+                CTRL_X, y, 240, 22, parent, DlgNative.WS_EX_CLIENTEDGE);
             DlgNative.SendMessage(ed, DlgNative.EM_LIMITTEXT, (IntPtr)512, IntPtr.Zero);
             CreateChild(DlgNative.WC_BUTTON, "浏览…", browseId,
-                DlgNative.BS_PUSHBUTTON | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE | DlgNative.WS_TABSTOP,
-                CTRL_X + 258, y, 60, 20, parent, 0);
+                DlgNative.BS_OWNERDRAW | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE | DlgNative.WS_TABSTOP,
+                CTRL_X + 248, y, 60, 22, parent, 0);
+            _buttonIds.Add(browseId);
             y += ROW_H;
         }
 
         private static void AddButton(IntPtr parent, int id, string text, ref int y, int w, int h)
         {
             CreateChild(DlgNative.WC_BUTTON, text, id,
-                DlgNative.BS_PUSHBUTTON | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE | DlgNative.WS_TABSTOP,
+                DlgNative.BS_OWNERDRAW | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE | DlgNative.WS_TABSTOP,
                 LBL_X, y, w, h, parent, 0);
-            y += ROW_H;
+            _buttonIds.Add(id);
+            y += Math.Max(ROW_H, h + 4);
         }
 
-        /// <summary>
-        /// 创建一行"标签 : 值 [+ 操作按钮]"的信息行，用于「关于」分组。
-        /// valueBtnId 与 valueBtnText 为 0/null 时不显示按钮。
-        /// </summary>
         private static void AddInfoLabel(IntPtr parent, string label, string value, ref int y, int valueBtnId = 0, string? valueBtnText = null)
         {
-            CreateChild(DlgNative.WC_STATIC, label, 0,
-                DlgNative.SS_LEFT | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE, LBL_X, y + 2, 120, 18, parent, 0);
+            CreateLabel(parent, label, y);
             CreateChild(DlgNative.WC_STATIC, value, 0,
-                DlgNative.SS_LEFT | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE, CTRL_X, y + 2, 220, 18, parent, 0);
+                DlgNative.SS_LEFT | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE,
+                CTRL_X, y + 2, 220, 18, parent, 0);
             if (valueBtnId != 0 && !string.IsNullOrEmpty(valueBtnText))
             {
                 CreateChild(DlgNative.WC_BUTTON, valueBtnText!, valueBtnId,
-                    DlgNative.BS_PUSHBUTTON | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE | DlgNative.WS_TABSTOP,
-                    CTRL_X + 228, y, 60, 20, parent, 0);
+                    DlgNative.BS_OWNERDRAW | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE | DlgNative.WS_TABSTOP,
+                    CTRL_X + 228, y, 60, 22, parent, 0);
+                _buttonIds.Add(valueBtnId);
             }
             y += ROW_H;
         }
 
         private static void AddTrack(IntPtr parent, int id, string label, ref int y, int min, int max, double val)
         {
-            CreateChild(DlgNative.WC_STATIC, label, 0,
-                DlgNative.SS_LEFT | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE, LBL_X, y + 2, 120, 18, parent, 0);
+            CreateLabel(parent, label, y);
             IntPtr trk = CreateChild(DlgNative.TRACKBAR_CLASS, "", id,
                 DlgNative.WS_CHILD | DlgNative.WS_VISIBLE | DlgNative.WS_TABSTOP,
-                CTRL_X, y, TRACK_W, 20, parent, 0);
+                CTRL_X, y, TRACK_W, 22, parent, 0);
             SetTrackRange(trk, min, max, (int)Math.Round(val));
             IntPtr valLbl = CreateChild(DlgNative.WC_STATIC, TrackValue(id, (int)Math.Round(val)).ToString("0.##"), 0,
-                DlgNative.SS_LEFT | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE, VAL_X, y + 2, 120, 18, parent, 0);
+                DlgNative.SS_LEFT | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE, VAL_X, y + 2, VAL_W, 18, parent, 0);
             _valLabels[id] = valLbl;
             y += ROW_H;
         }
 
         private static void AddTrackScaled(IntPtr parent, int id, string label, ref int y, int min, int max, double val, double scale)
         {
-            CreateChild(DlgNative.WC_STATIC, label, 0,
-                DlgNative.SS_LEFT | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE, LBL_X, y + 2, 120, 18, parent, 0);
+            CreateLabel(parent, label, y);
             int pos = (int)Math.Round(val * scale);
             IntPtr trk = CreateChild(DlgNative.TRACKBAR_CLASS, "", id,
                 DlgNative.WS_CHILD | DlgNative.WS_VISIBLE | DlgNative.WS_TABSTOP,
-                CTRL_X, y, TRACK_W, 20, parent, 0);
+                CTRL_X, y, TRACK_W, 22, parent, 0);
             SetTrackRange(trk, min, max, pos);
             IntPtr valLbl = CreateChild(DlgNative.WC_STATIC, TrackValue(id, pos).ToString("0.##"), 0,
-                DlgNative.SS_LEFT | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE, VAL_X, y + 2, 120, 18, parent, 0);
+                DlgNative.SS_LEFT | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE, VAL_X, y + 2, VAL_W, 18, parent, 0);
             _valLabels[id] = valLbl;
             y += ROW_H;
+        }
+
+        private static void CreateLabel(IntPtr parent, string text, int y)
+        {
+            CreateChild(DlgNative.WC_STATIC, text, 0,
+                DlgNative.SS_LEFT | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE,
+                LBL_X, y + 2, LBL_W, 18, parent, 0);
         }
 
         // ---------------- helpers ----------------
@@ -351,6 +417,7 @@ namespace MouseBeautifier
         {
             IntPtr hwnd = DlgNative.CreateWindowEx(exStyle, cls, text, style, x, y, w, h,
                 parent, (IntPtr)id, _hInstance, IntPtr.Zero);
+            // Apply body font to every child (headers get bold font applied separately)
             if (_hFont != IntPtr.Zero)
                 DlgNative.SendMessage(hwnd, DlgNative.WM_SETFONT, _hFont, (IntPtr)1);
             _children.Add((hwnd, y));
@@ -369,6 +436,160 @@ namespace MouseBeautifier
             if (v == null) return 0;
             for (int i = 0; i < arr.Length; i++) if (arr[i] == v) return i;
             return 0;
+        }
+
+        // ---------------- owner-draw rendering ----------------
+        private static void OnDrawItem(IntPtr lParam)
+        {
+            if (lParam == IntPtr.Zero) return;
+            var dis = Marshal.PtrToStructure<DlgNative.DRAWITEMSTRUCT>(lParam);
+            int id = (int)dis.CtlID;
+
+            if (_headerLineIds.Contains(id))
+                DrawHeaderLine(ref dis);
+            else if (_checkBoxIds.Contains(id))
+                DrawCheckBox(ref dis, GetButtonText(dis.hwndItem));
+            else if (_colorButtonIds.Contains(id))
+                DrawColorButton(ref dis, GetButtonText(dis.hwndItem));
+            else if (_buttonIds.Contains(id))
+                DrawButton(ref dis, GetButtonText(dis.hwndItem));
+        }
+
+        private static void DrawHeaderLine(ref DlgNative.DRAWITEMSTRUCT dis)
+        {
+            var br = DlgNative.CreateSolidBrush(CLR_ACCENT);
+            DlgNative.FillRect(dis.hdc, ref dis.rcItem, br);
+            DlgNative.DeleteObject(br);
+        }
+
+        private static void DrawButton(ref DlgNative.DRAWITEMSTRUCT dis, string text)
+        {
+            var rc = dis.rcItem;
+            var hdc = dis.hdc;
+            bool pressed = (dis.itemState & DlgNative.ODS_SELECTED) != 0;
+            bool hot = (dis.itemState & DlgNative.ODS_HOTLIGHT) != 0;
+
+            // Background fill
+            int bgColor = pressed ? CLR_ACCENT : (hot ? CLR_ACCENT_LIGHT : CLR_BG);
+            var bg = DlgNative.CreateSolidBrush(bgColor);
+            DlgNative.FillRect(hdc, ref rc, bg);
+            DlgNative.DeleteObject(bg);
+
+            // Border
+            int borderColor = (pressed || hot) ? CLR_ACCENT : CLR_BORDER;
+            var pen = DlgNative.CreatePen(DlgNative.PS_SOLID, 1, borderColor);
+            var oldPen = DlgNative.SelectObject(hdc, pen);
+            var nullBr = DlgNative.GetStockObject(DlgNative.NULL_BRUSH);
+            var oldBr = DlgNative.SelectObject(hdc, nullBr);
+            DlgNative.Rectangle(hdc, rc.left, rc.top, rc.right, rc.bottom);
+            DlgNative.SelectObject(hdc, oldBr);
+            DlgNative.SelectObject(hdc, oldPen);
+            DlgNative.DeleteObject(pen);
+
+            // Text
+            DlgNative.SetBkMode(hdc, DlgNative.TRANSPARENT);
+            DlgNative.SetTextColor(hdc, pressed ? CLR_WHITE : CLR_TEXT);
+            var tr = rc;
+            DlgNative.DrawText(hdc, text, text.Length, ref tr,
+                DlgNative.DT_CENTER | DlgNative.DT_VCENTER | DlgNative.DT_SINGLELINE | DlgNative.DT_NOPREFIX);
+        }
+
+        private static void DrawColorButton(ref DlgNative.DRAWITEMSTRUCT dis, string text)
+        {
+            var rc = dis.rcItem;
+            var hdc = dis.hdc;
+            bool pressed = (dis.itemState & DlgNative.ODS_SELECTED) != 0;
+            bool hot = (dis.itemState & DlgNative.ODS_HOTLIGHT) != 0;
+            int color = HexToColorref(text);
+
+            // Background
+            var bg = DlgNative.CreateSolidBrush(CLR_BG);
+            DlgNative.FillRect(hdc, ref rc, bg);
+            DlgNative.DeleteObject(bg);
+
+            // Color swatch (left portion)
+            var swatch = new DlgNative.RECT { left = rc.left + 6, top = rc.top + 4, right = rc.left + 42, bottom = rc.bottom - 4 };
+            var sw = DlgNative.CreateSolidBrush(color);
+            DlgNative.FillRect(hdc, ref swatch, sw);
+            DlgNative.DeleteObject(sw);
+            // Swatch border
+            var spen = DlgNative.CreatePen(DlgNative.PS_SOLID, 1, CLR_BORDER);
+            var op = DlgNative.SelectObject(hdc, spen);
+            var nb = DlgNative.GetStockObject(DlgNative.NULL_BRUSH);
+            var ob = DlgNative.SelectObject(hdc, nb);
+            DlgNative.Rectangle(hdc, swatch.left, swatch.top, swatch.right, swatch.bottom);
+            DlgNative.SelectObject(hdc, ob);
+            DlgNative.SelectObject(hdc, op);
+            DlgNative.DeleteObject(spen);
+
+            // Hex text
+            DlgNative.SetBkMode(hdc, DlgNative.TRANSPARENT);
+            DlgNative.SetTextColor(hdc, CLR_TEXT);
+            var tr = new DlgNative.RECT { left = rc.left + 50, top = rc.top, right = rc.right - 4, bottom = rc.bottom };
+            DlgNative.DrawText(hdc, text, text.Length, ref tr,
+                DlgNative.DT_LEFT | DlgNative.DT_VCENTER | DlgNative.DT_SINGLELINE | DlgNative.DT_NOPREFIX);
+
+            // Hover/pressed border around whole button
+            if (hot || pressed)
+            {
+                var bpen = DlgNative.CreatePen(DlgNative.PS_SOLID, 1, CLR_ACCENT);
+                var op2 = DlgNative.SelectObject(hdc, bpen);
+                DlgNative.Rectangle(hdc, rc.left, rc.top, rc.right, rc.bottom);
+                DlgNative.SelectObject(hdc, op2);
+                DlgNative.DeleteObject(bpen);
+            }
+        }
+
+        private static void DrawCheckBox(ref DlgNative.DRAWITEMSTRUCT dis, string text)
+        {
+            var rc = dis.rcItem;
+            var hdc = dis.hdc;
+            bool isChecked = (dis.itemState & DlgNative.ODS_CHECKED) != 0;
+            bool hot = (dis.itemState & DlgNative.ODS_HOTLIGHT) != 0;
+
+            // Background
+            var bg = DlgNative.CreateSolidBrush(CLR_BG);
+            DlgNative.FillRect(hdc, ref rc, bg);
+            DlgNative.DeleteObject(bg);
+
+            // Checkbox box (14x14, vertically centered)
+            int boxSize = 14;
+            int boxX = rc.left;
+            int boxY = rc.top + ((rc.bottom - rc.top) - boxSize) / 2;
+
+            if (isChecked)
+            {
+                var ab = DlgNative.CreateSolidBrush(CLR_ACCENT);
+                var br = new DlgNative.RECT { left = boxX, top = boxY, right = boxX + boxSize, bottom = boxY + boxSize };
+                DlgNative.FillRect(hdc, ref br, ab);
+                DlgNative.DeleteObject(ab);
+                // White checkmark
+                var pen = DlgNative.CreatePen(DlgNative.PS_SOLID, 2, CLR_WHITE);
+                var op = DlgNative.SelectObject(hdc, pen);
+                DlgNative.MoveToEx(hdc, boxX + 3, boxY + 7, IntPtr.Zero);
+                DlgNative.LineTo(hdc, boxX + 6, boxY + 10);
+                DlgNative.LineTo(hdc, boxX + 11, boxY + 3);
+                DlgNative.SelectObject(hdc, op);
+                DlgNative.DeleteObject(pen);
+            }
+            else
+            {
+                var pen = DlgNative.CreatePen(DlgNative.PS_SOLID, 1, hot ? CLR_ACCENT : CLR_BORDER);
+                var op = DlgNative.SelectObject(hdc, pen);
+                var nb = DlgNative.GetStockObject(DlgNative.NULL_BRUSH);
+                var ob = DlgNative.SelectObject(hdc, nb);
+                DlgNative.Rectangle(hdc, boxX, boxY, boxX + boxSize, boxY + boxSize);
+                DlgNative.SelectObject(hdc, ob);
+                DlgNative.SelectObject(hdc, op);
+                DlgNative.DeleteObject(pen);
+            }
+
+            // Text
+            DlgNative.SetBkMode(hdc, DlgNative.TRANSPARENT);
+            DlgNative.SetTextColor(hdc, CLR_TEXT);
+            var tr = new DlgNative.RECT { left = boxX + boxSize + 8, top = rc.top, right = rc.right, bottom = rc.bottom };
+            DlgNative.DrawText(hdc, text, text.Length, ref tr,
+                DlgNative.DT_LEFT | DlgNative.DT_VCENTER | DlgNative.DT_SINGLELINE | DlgNative.DT_NOPREFIX);
         }
 
         // ---------------- events ----------------
@@ -397,7 +618,6 @@ namespace MouseBeautifier
                 return;
             }
 
-            // checkbox / combo / edit change -> commit
             Commit(hWnd);
         }
 
@@ -442,12 +662,10 @@ namespace MouseBeautifier
 
         private static void Rebuild(IntPtr hWnd)
         {
-            // destroy all children and rebuild from current settings
             foreach (var (hwnd, _) in _children)
                 DlgNative.DestroyWindow(hwnd);
             _children.Clear();
             BuildUI(hWnd);
-            // BuildUI resets _scroll to 0; make sure children reflect that position.
             foreach (var (hwnd, baseY) in _children)
                 DlgNative.SetWindowPos(hwnd, IntPtr.Zero, 0, baseY, 0, 0,
                     DlgNative.SWP_NOSIZE | DlgNative.SWP_NOZORDER | DlgNative.SWP_NOACTIVATE);
@@ -462,7 +680,7 @@ namespace MouseBeautifier
                 case ID_TRK_ROPESTIFF: return pos / 100.0;
                 case ID_TRK_TRAILLEN: return pos / 100.0;
                 case ID_TRK_GLOWINT: return pos / 100.0;
-                case ID_TRK_ORBITSPEED: return pos - 360.0; // 0..720 -> -360..360
+                case ID_TRK_ORBITSPEED: return pos - 360.0;
                 default: return pos;
             }
         }
@@ -491,6 +709,7 @@ namespace MouseBeautifier
             s.RopeGravity = (int)GetTrackValue(hWnd, ID_TRK_ROPEGRAV);
             s.RopeDamping = GetTrackValue(hWnd, ID_TRK_ROPEDAMP);
             s.RopeStiffness = GetTrackValue(hWnd, ID_TRK_ROPESTIFF);
+            s.RopeWidth = (int)GetTrackValue(hWnd, ID_TRK_ROPEWIDTH);
             int isel = DlgNative.SendMessage(GetChild(hWnd, ID_CMB_ICON), DlgNative.CB_GETCURSEL, IntPtr.Zero, IntPtr.Zero).ToInt32();
             if (isel < 0 || isel >= IconVals.Length) isel = 0;
             s.IconType = IconVals[isel];
@@ -564,6 +783,7 @@ namespace MouseBeautifier
                 int b = (cc.rgbResult >> 16) & 0xFF;
                 string hex = $"#FF{r:X2}{g:X2}{b:X2}";
                 DlgNative.SetWindowText(btn, hex);
+                DlgNative.InvalidateRect(btn, IntPtr.Zero, true);
                 Commit(hWnd);
             }
         }
@@ -596,7 +816,6 @@ namespace MouseBeautifier
 
         // ---------------- misc helpers ----------------
 
-        /// <summary>用系统默认浏览器打开 URL（ShellExecute 的等价调用）。</summary>
         private static void OpenUrl(string url)
         {
             try
@@ -607,21 +826,17 @@ namespace MouseBeautifier
                     UseShellExecute = true,
                 });
             }
-            catch { /* 用户取消或无默认浏览器 */ }
+            catch { }
         }
 
-        /// <summary>把文本写入剪贴板（OLE 剪贴板，无需引用 WinForms）。</summary>
         private static void CopyToClipboard(string text)
         {
-            // 走 Win32 OpenClipboard / SetClipboardData，避免依赖 System.Windows.Forms。
             if (!DlgNative.OpenClipboard(IntPtr.Zero)) return;
             try
             {
                 DlgNative.EmptyClipboard();
-                // CF_UNICODETEXT = 13
                 IntPtr hGlobal = Marshal.StringToHGlobalUni(text);
                 DlgNative.SetClipboardData(13, hGlobal);
-                // 系统拥有该内存，不要 FreeHGlobal。
             }
             finally
             {

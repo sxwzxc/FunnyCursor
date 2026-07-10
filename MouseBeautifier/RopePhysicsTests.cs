@@ -138,6 +138,36 @@ namespace MouseBeautifier
                 Check("卡顿+跳变", ok, $"bob-anchor dist={dist:F1} (max {maxLen:F1})");
             }
 
+            // ---------- Test 7: swing physics — bob must LAG and SWING ----------
+            // After a sideways step the bob should trail behind the cursor (not
+            // rigidly follow). After the cursor stops, the bob should swing past
+            // equilibrium (overshoot) proving real pendulum dynamics, not a
+            // straight rigid line.
+            {
+                var rope = new RopeSimulator();
+                rope.ApplySettings(s);
+                var anchor = new Vector2(400, 300);
+                // settle to straight-down rest
+                for (int i = 0; i < 120; i++) rope.Update(1.0 / 60.0, anchor, s);
+                // step cursor 200px right in one frame, then hold still
+                anchor += new Vector2(200, 0);
+                float maxLagX = 0;
+                float bobX = rope.Bob.X;
+                bool swungPastAnchorX = false;
+                for (int i = 0; i < 180; i++)
+                {
+                    rope.Update(1.0 / 60.0, anchor, s);
+                    float lag = anchor.X - rope.Bob.X; // positive = bob trails right of... actually bob < anchor.X means lag
+                    if (lag > maxLagX) maxLagX = lag;
+                    // after stopping, a swinging pendulum overshoots: bob.X > anchor.X momentarily
+                    if (rope.Bob.X > anchor.X + 2f) swungPastAnchorX = true;
+                }
+                // bob must have lagged at least 15px (proves it's not rigid)
+                bool hasLag = maxLagX > 15f;
+                bool ok = hasLag && swungPastAnchorX;
+                Check("摆动物理", ok, $"maxLag={maxLagX:F1}px 过冲={swungPastAnchorX} (需要 lag>15 且过冲)");
+            }
+
             string summary = $"=== 绳子物理测试完成: {total - fail}/{total} 通过, {fail} 失败 ===";
             Console.WriteLine(summary);
             App.Log(summary);

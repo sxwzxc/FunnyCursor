@@ -32,3 +32,6 @@ build_debug.log
 xc_err.txt
 xc_out.txt
 
+# Windows reserved-name artifact (created by some build tools)
+nul
+
