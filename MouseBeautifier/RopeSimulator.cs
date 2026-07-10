@@ -7,20 +7,22 @@ namespace MouseBeautifier
     /// Verlet-integrated rope. Point 0 is pinned to the cursor; the rest hang
     /// under gravity and swing naturally according to the cursor's motion.
     ///
-    /// Stability strategy (without killing physics):
+    /// Stability strategy (4 layers, in execution order):
     ///   1. Anchor interpolation — across substeps the anchor moves in small
-    ///      increments, so constraint corrections stay small and never inject
-    ///      huge velocities.
-    ///   2. Per-step velocity clamp — caps the Verlet velocity to a fraction of
-    ///      the segment length, so even if a constraint correction slips through,
-    ///      it can never launch a point across the screen.
-    ///   3. Max-distance safety net — hard clamps any point beyond the rope's
-    ///      total length back toward the anchor.
-    ///
-    /// NOTE: The previous version translated the ENTIRE rope by the anchor delta
-    /// each frame. That prevented the "fly off" bug but also made the rope rigidly
-    /// follow the cursor with zero swing — it looked like a dead straight line.
-    /// The approach below keeps stability AND restores pendulum-like swing physics.
+    ///      increments, so constraint corrections stay small.
+    ///   2. Pre-integration velocity clamp — caps the Verlet velocity BEFORE
+    ///      integration so inertia from previous frames can't explode.
+    ///   3. Post-constraint velocity clamp — THE KEY FIX: after the constraint
+    ///      solver moves _pos to satisfy distance constraints, it does NOT touch
+    ///      _prev. So the next frame's Verlet velocity = _pos - _prev would
+    ///      contain the constraint correction (a position fix, not real motion),
+    ///      injecting fake velocity that accumulates and eventually launches
+    ///      points across the screen. We clamp _prev after constraints so the
+    ///      induced velocity never exceeds segLen per step.
+    ///   4. Max-distance safety net + NaN defense — hard clamps any point beyond
+    ///      the rope's total length, and resets the rope if NaN/Infinity creeps in
+    ///      (shouldn't happen, but defense-in-depth prevents a permanently broken
+    ///      rope from freezing the overlay).
     /// </summary>
     public sealed class RopeSimulator
     {
@@ -32,6 +34,7 @@ namespace MouseBeautifier
         private float _damping;  // 0.5..0.999 (higher = less air drag)
         private float _stiffness;// 0..1 (higher = more constraint iterations)
         private Vector2 _lastAnchor;
+        private Vector2 _cursorVel;
         private bool _anchored;
 
         public void ApplySettings(AppSettings s)
@@ -47,8 +50,6 @@ namespace MouseBeautifier
                 _n = segs;
                 _pos  = new Vector2[_n + 1];
                 _prev = new Vector2[_n + 1];
-                // Place rope hanging straight down from origin; repositioned to
-                // the real anchor on the first Update call.
                 for (int i = 0; i <= _n; i++)
                 {
                     _pos[i]  = new Vector2(0, i * _segLen);
@@ -63,31 +64,32 @@ namespace MouseBeautifier
             if (s.RopeSegments != _n || _pos.Length == 0)
                 ApplySettings(s);
 
-            // First-time init: snap the rope to hang straight down from the anchor.
-            if (!_anchored)
+            // NaN defense: if any point became NaN (shouldn't, but defense-in-depth),
+            // reset the rope to a clean hanging state under the current anchor.
+            if (HasNaN())
             {
-                for (int i = 0; i <= _n; i++)
-                {
-                    _pos[i]  = anchor + new Vector2(0, i * _segLen);
-                    _prev[i] = _pos[i];
-                }
-                _lastAnchor = anchor;
-                _anchored = true;
-                return; // skip the first frame so velocities start at zero
+                App.Log("RopeSimulator: NaN detected, resetting rope");
+                ResetTo(anchor);
+                return;
             }
 
-            // Clamp dt to avoid pathological steps after a stall / debugger pause.
+            if (!_anchored)
+            {
+                ResetTo(anchor);
+                return;
+            }
+
             double h = Math.Min(dt, 1.0 / 30.0);
 
-            // Sub-step for stability. The anchor is interpolated across substeps
-            // so no single step ever sees a large anchor jump — this is what
-            // keeps constraint corrections (and therefore induced velocities) small.
+            // Sub-step for stability with anchor interpolation across substeps.
             const double maxStep = 1.0 / 240.0;
             int substeps = Math.Max(1, (int)Math.Ceiling(h / maxStep));
             substeps = Math.Min(substeps, 16);
             double sub = h / substeps;
 
             Vector2 anchorStart = _lastAnchor;
+            _cursorVel = dt > 1e-4 ? (anchor - anchorStart) / (float)dt : Vector2.Zero;
+
             for (int step = 0; step < substeps; step++)
             {
                 float t = (step + 1) / (float)substeps;
@@ -97,13 +99,29 @@ namespace MouseBeautifier
             _lastAnchor = anchor;
         }
 
+        private void ResetTo(Vector2 anchor)
+        {
+            for (int i = 0; i <= _n; i++)
+            {
+                _pos[i]  = anchor + new Vector2(0, i * _segLen);
+                _prev[i] = _pos[i];
+            }
+            _lastAnchor = anchor;
+            _anchored = true;
+        }
+
         private void IntegrateStep(double h, Vector2 anchor)
         {
             float g = _gravity * (float)(h * h);
-            float damp = MathF.Pow(_damping, (float)(h * 60f));
 
-            // Max velocity per step = 1.5 * segment length. This prevents the
-            // "fly off" explosion without killing natural swing motion.
+            // Adaptive damping: extra damping when cursor moves fast, to suppress
+            // energy injection from rapid cursor motion.
+            float cursorSpeed = _cursorVel.Length();
+            float extraDamp = MathF.Min(cursorSpeed / 1500f, 0.5f);
+            float effectiveDamp = Math.Clamp(_damping - extraDamp, 0.3f, 0.999f);
+            float damp = MathF.Pow(effectiveDamp, (float)(h * 60f));
+
+            // Max velocity per step for Verlet integration (pre-integration clamp).
             float maxVel = _segLen * 1.5f;
 
             // Verlet integration for free points (1..n). Point 0 is pinned.
@@ -137,7 +155,6 @@ namespace MouseBeautifier
                     var offset = d * (0.5f * diff);
                     if (i == 0)
                     {
-                        // anchor is fixed -> move only the child point
                         _pos[i + 1] -= offset * 2f;
                     }
                     else
@@ -147,6 +164,23 @@ namespace MouseBeautifier
                     }
                 }
                 _pos[0] = anchor;
+            }
+
+            // POST-CONSTRAINT VELOCITY CLAMP — THE KEY FIX.
+            // The constraint solver moved _pos to satisfy distance constraints but
+            // did not touch _prev. So _pos - _prev now contains the constraint
+            // correction (a position fix), which would become next frame's Verlet
+            // velocity and accumulate into an explosion. We clamp _prev so the
+            // induced velocity never exceeds segLen per step — this kills the
+            // "fly off screen" bug while preserving normal pendulum swing (which
+            // produces velocities well below segLen per step).
+            float maxPostVel = _segLen;
+            for (int i = 1; i <= _n; i++)
+            {
+                var v = _pos[i] - _prev[i];
+                float vl = v.Length();
+                if (vl > maxPostVel)
+                    _prev[i] = _pos[i] - v * (maxPostVel / vl);
             }
 
             // Safety clamp: never let any point wander beyond the rope's total length.
@@ -161,6 +195,17 @@ namespace MouseBeautifier
                     _prev[i] = _pos[i];
                 }
             }
+        }
+
+        private bool HasNaN()
+        {
+            for (int i = 0; i < _pos.Length; i++)
+            {
+                if (float.IsNaN(_pos[i].X) || float.IsNaN(_pos[i].Y) ||
+                    float.IsInfinity(_pos[i].X) || float.IsInfinity(_pos[i].Y))
+                    return true;
+            }
+            return false;
         }
 
         public Vector2 Bob => _pos.Length > 0 ? _pos[_n] : Vector2.Zero;

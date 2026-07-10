@@ -242,6 +242,18 @@ namespace MouseBeautifier
                 dir = new Vector2(0, 1); // default: hang straight down
             else
                 dir /= len;
+
+            // NaN defense: if physics produced NaN/Infinity, substitute safe values
+            // so the drawing layer never receives invalid coordinates (which would
+            // make CanvasGeometry.CreatePolygon throw and freeze the overlay).
+            if (float.IsNaN(tip.X) || float.IsNaN(tip.Y) ||
+                float.IsInfinity(tip.X) || float.IsInfinity(tip.Y) ||
+                float.IsNaN(dir.X) || float.IsNaN(dir.Y))
+            {
+                App.Log("ComputePendant: NaN/Inf in rope points, using fallback");
+                return new PendantState(Vector2.Zero, new Vector2(0, 1), iconSize);
+            }
+
             return new PendantState(tip, dir, iconSize);
         }
 
@@ -270,36 +282,42 @@ namespace MouseBeautifier
             }
 
             // Pendant layout: tip == rope end (Bob), extends along rope direction.
-            // This is the KEY fix: the pendant's tip is literally the rope's last
-            // point, so it can NEVER detach from the rope regardless of motion.
             var pendant = ComputePendant(pts, (float)s.IconSize);
 
             var icon = GetImageIcon(s.IconType);
             bool hasBitmap = icon != null && icon.SvgSource == null && icon.Frames != null;
-            if (hasBitmap)
+            // Wrap pendant drawing in try-catch: if the icon type's geometry fails
+            // (e.g. device lost, invalid state), we must NOT let the exception
+            // propagate to RenderFrame's catch — that would skip Present() every
+            // frame and make ALL effects disappear (the "切换图标后特效消失" bug).
+            try
             {
-                // Bitmap icons: draw centered on the tip but offset so the image's
-                // top edge sits at the rope end (hangs below the rope).
-                float size = (float)s.IconSize;
-                float half = size / 2f;
-
-                var saved = session.Transform;
-                session.Transform = Matrix3x2.CreateTranslation(pendant.Tip) *
-                                    Matrix3x2.CreateRotation(pendant.AngleRad);
-
-                var frame = icon.GetFrame(_animTime);
-                if (frame != null)
+                if (hasBitmap)
                 {
-                    // Local space: tip at (0,0), image spans [0, size] in +Y (along rope).
-                    var dst = new Rect(-half, 0, size, size);
-                    var src = new Rect(0, 0, frame.Size.Width, frame.Size.Height);
-                    session.DrawImage(frame, dst, src, 1.0f, CanvasImageInterpolation.HighQualityCubic);
+                    float size = (float)s.IconSize;
+                    float half = size / 2f;
+
+                    var saved = session.Transform;
+                    session.Transform = Matrix3x2.CreateTranslation(pendant.Tip) *
+                                        Matrix3x2.CreateRotation(pendant.AngleRad);
+
+                    var frame = icon.GetFrame(_animTime);
+                    if (frame != null)
+                    {
+                        var dst = new Rect(-half, 0, size, size);
+                        var src = new Rect(0, 0, frame.Size.Width, frame.Size.Height);
+                        session.DrawImage(frame, dst, src, 1.0f, CanvasImageInterpolation.HighQualityCubic);
+                    }
+                    session.Transform = saved;
                 }
-                session.Transform = saved;
+                else
+                {
+                    DrawBuiltinIcon(session, pendant, s);
+                }
             }
-            else
+            catch (Exception ex)
             {
-                DrawBuiltinIcon(session, pendant, s);
+                App.Log("DrawRope pendant: " + ex.Message + " (iconType=" + s.IconType + ")");
             }
         }
 

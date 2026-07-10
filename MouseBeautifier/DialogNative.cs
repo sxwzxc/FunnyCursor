@@ -318,6 +318,7 @@ namespace MouseBeautifier
         public const int WM_CTLCOLOR_EDIT = 0x0133;
         public const int WM_MOUSEMOVE = 0x0200;
         public const int WM_MOUSELEAVE = 0x02A3;
+        public const int WM_GETMINMAXINFO = 0x0024;
 
         // DRAWITEMSTRUCT.CtlType
         public const uint ODT_BUTTON = 4;
@@ -439,6 +440,16 @@ namespace MouseBeautifier
         {
             public int X;
             public int Y;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct MINMAXINFO
+        {
+            public POINT ptReserved;
+            public POINT ptMaxSize;
+            public POINT ptMaxPosition;
+            public POINT ptMinTrackSize;
+            public POINT ptMaxTrackSize;
         }
 
         [DllImport("user32.dll")]

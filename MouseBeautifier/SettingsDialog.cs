@@ -14,18 +14,19 @@ namespace MouseBeautifier
     internal static class SettingsDialog
     {
         // ---- Layout ----
-        private const int DLG_W = 540;
-        private const int MARGIN = 24;
-        private const int SECTION_W = DLG_W - 2 * MARGIN;   // 492
+        private const int DLG_W = 580;
+        private const int DLG_MIN_W = 520;
+        private const int MARGIN = 28;
+        private const int SECTION_W = DLG_W - 2 * MARGIN;   // 524
         private const int LBL_X = MARGIN;
-        private const int LBL_W = 140;
-        private const int CTRL_X = LBL_X + LBL_W + 8;        // 172
-        private const int TRACK_W = 160;
-        private const int VAL_X = CTRL_X + TRACK_W + 8;       // 340
+        private const int LBL_W = 150;
+        private const int CTRL_X = LBL_X + LBL_W + 12;       // 190
+        private const int TRACK_W = 180;
+        private const int VAL_X = CTRL_X + TRACK_W + 8;      // 378
         private const int VAL_W = 70;
-        private const int ROW_H = 26;
-        private const int SECTION_GAP = 8;
-        private const int SECTION_HEADER_H = 34;  // title 22 + line 2 + padding
+        private const int ROW_H = 30;
+        private const int SECTION_GAP = 12;
+        private const int SECTION_HEADER_H = 40;  // title 26 + line 2 + padding
 
         // ---- Colors (COLORREF = 0x00BBGGRR) ----
         private const int CLR_ACCENT       = 0x00D47800; // #0078D4
@@ -129,11 +130,13 @@ namespace MouseBeautifier
 
             DlgNative.ShowWindow(_hwnd, DlgNative.SW_SHOW);
 
-            // Create fonts + background brush once
+            // Create fonts + background brush once.
+            // Body = Segoe UI 10pt (-13), Headers = Segoe UI Semibold 14pt (-19)
+            // for a more spacious, modern look (was 9pt body / 12pt headers).
             if (_hFont == IntPtr.Zero)
             {
                 _hFont = DlgNative.CreateFont(
-                    -12, 0, 0, 0, DlgNative.FW_NORMAL, 0, 0, 0,
+                    -13, 0, 0, 0, DlgNative.FW_NORMAL, 0, 0, 0,
                     DlgNative.DEFAULT_CHARSET, DlgNative.OUT_TT_PRECIS,
                     DlgNative.CLIP_DEFAULT_PRECIS, DlgNative.CLEARTYPE_QUALITY,
                     DlgNative.DEFAULT_PITCH | DlgNative.FF_DONTCARE, "Segoe UI");
@@ -141,7 +144,7 @@ namespace MouseBeautifier
             if (_hFontBold == IntPtr.Zero)
             {
                 _hFontBold = DlgNative.CreateFont(
-                    -16, 0, 0, 0, DlgNative.FW_SEMIBOLD, 0, 0, 0,
+                    -19, 0, 0, 0, DlgNative.FW_SEMIBOLD, 0, 0, 0,
                     DlgNative.DEFAULT_CHARSET, DlgNative.OUT_TT_PRECIS,
                     DlgNative.CLIP_DEFAULT_PRECIS, DlgNative.CLEARTYPE_QUALITY,
                     DlgNative.DEFAULT_PITCH | DlgNative.FF_DONTCARE, "Segoe UI Semibold");
@@ -202,6 +205,12 @@ namespace MouseBeautifier
                 case DlgNative.WM_CLOSE:
                     DlgNative.ShowWindow(hWnd, DlgNative.SW_HIDE);
                     return IntPtr.Zero;
+                case DlgNative.WM_GETMINMAXINFO:
+                    // Enforce a minimum window size so controls never get clipped.
+                    var mmi = Marshal.PtrToStructure<DlgNative.MINMAXINFO>(lParam);
+                    mmi.ptMinTrackSize = new DlgNative.POINT { X = DLG_MIN_W, Y = 500 };
+                    Marshal.StructureToPtr(mmi, lParam, false);
+                    return IntPtr.Zero;
             }
             return DlgNative.DefWindowProc(hWnd, msg, wParam, lParam);
         }
@@ -216,7 +225,7 @@ namespace MouseBeautifier
             _colorButtonIds.Clear();
             _headerLineIds.Clear();
             _headerTextIds.Clear();
-            int y = 8;
+            int y = 12;
 
             // ---- 点击特效 ----
             y = SectionStart(hWnd, ID_HDR_CLICK, "点击特效", y);
@@ -290,21 +299,21 @@ namespace MouseBeautifier
         /// <summary>Creates a modern section header: bold title + accent underline.</summary>
         private static int SectionStart(IntPtr parent, int titleId, string title, int y)
         {
-            // Bold header text
+            // Bold header text (taller to fit 14pt font)
             IntPtr hdr = CreateChild(DlgNative.WC_STATIC, title, titleId,
                 DlgNative.SS_LEFT | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE,
-                MARGIN, y, SECTION_W, 22, parent, 0);
+                MARGIN, y, SECTION_W, 26, parent, 0);
             DlgNative.SendMessage(hdr, DlgNative.WM_SETFONT, _hFontBold, (IntPtr)1);
             _headerTextIds.Add(titleId);
 
-            // Accent underline (1px owner-draw static)
+            // Accent underline (2px owner-draw static, below the title)
             int lineId = titleId + 5000;
             CreateChild(DlgNative.WC_STATIC, "", lineId,
                 DlgNative.SS_OWNERDRAW | DlgNative.WS_CHILD | DlgNative.WS_VISIBLE,
-                MARGIN, y + 24, SECTION_W, 2, parent, 0);
+                MARGIN, y + 28, SECTION_W, 2, parent, 0);
             _headerLineIds.Add(lineId);
 
-            return y + SECTION_HEADER_H;
+            return y + SECTION_HEADER_H + SECTION_GAP;
         }
 
         private static void AddCheckBox(IntPtr parent, int id, string text, ref int y, bool a)

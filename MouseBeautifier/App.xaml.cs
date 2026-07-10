@@ -49,6 +49,12 @@ namespace MouseBeautifier
             {
                 return PendantTests.Run();
             }
+            // Stress test: simulate extreme cursor motion to verify the physics
+            // never produces NaN/Infinity or flies off screen.
+            if (args.Length > 0 && args[0] == "--test-stress")
+            {
+                return StressTests.Run();
+            }
 
             Log("Main start");
             AppDomain.CurrentDomain.UnhandledException += (_, e) =>
