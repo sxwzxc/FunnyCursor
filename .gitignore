@@ -35,3 +35,11 @@ xc_out.txt
 # Windows reserved-name artifact (created by some build tools)
 nul
 
+# Scratch / analysis notes from debugging sessions (not source)
+*Repro/
+*.Verify/
+*RopeStar*.md
+*StarRope*.md
+*RootCause*.md
+*Safety.md
+

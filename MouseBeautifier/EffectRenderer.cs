@@ -136,7 +136,7 @@ namespace MouseBeautifier
             if (s.EnableGlow) DrawGlow(session, cursor, s);
             if (s.EnableTrail) _trail.Render(session, ColorsUtil.Parse(s.TrailColor), (float)s.TrailWidth);
             if (s.EnableOrbit) DrawOrbit(session, cursor, s);
-            if (s.EnableRope) DrawRope(session, s);
+            if (s.EnableRope) DrawRope(session, s, cursor);
             _particles.Render(session);
         }
 
@@ -188,76 +188,11 @@ namespace MouseBeautifier
         }
 
         // ---------- Rope + hanging icon ----------
+        // Pendant geometry (tip == rope end, rotation about that point) lives in
+        // the pure, headless-testable PendantGeometry class — single source of
+        // truth shared by the renderer and the StarAttachment test harness.
 
-        /// <summary>
-        /// Pure-function pendant (悬挂物) layout. Computes where the icon should be
-        /// drawn so that its TIP is exactly at the rope's last point (Bob) and it
-        /// extends along the rope's end direction. This binds the pendant to the
-        /// rope both visually (tip == rope end, never detaches) and directionally
-        /// (extends along the rope, looking like the rope's final segment).
-        ///
-        /// Exposed as a public static pure function so --test-pendant can verify
-        /// the geometric contract without needing a live render surface.
-        /// </summary>
-        public readonly struct PendantState
-        {
-            public readonly Vector2 Tip;        // = rope's last point (Bob)
-            public readonly Vector2 Direction;  // unit vector along rope end direction
-            public readonly float AngleRad;     // rotation for Canvas (Atan2(dir.X, dir.Y))
-            public readonly Vector2 BaseCenter;  // far end of the pendant = Tip + Direction*Size
-
-            public PendantState(Vector2 tip, Vector2 dir, float size)
-            {
-                Tip = tip;
-                Direction = dir;
-                AngleRad = MathF.Atan2(dir.X, dir.Y);
-                BaseCenter = tip + dir * size;
-            }
-        }
-
-        /// <summary>
-        /// Compute the pendant transform from rope points + icon size.
-        /// Uses the LAST TWO segments' average direction for angle stability:
-        /// a single ~9px segment is noisy under fast swing, causing the triangle
-        /// to jitter. Averaging 2 segments smooths the direction without lag.
-        /// </summary>
-        public static PendantState ComputePendant(Vector2[] ropePoints, float iconSize)
-        {
-            if (ropePoints == null || ropePoints.Length < 2)
-                return new PendantState(Vector2.Zero, new Vector2(0, 1), iconSize);
-
-            Vector2 tip = ropePoints[ropePoints.Length - 1];
-            Vector2 dir;
-            if (ropePoints.Length >= 3)
-            {
-                // Average direction over the last 2 segments — much smoother than 1.
-                dir = ropePoints[ropePoints.Length - 1] - ropePoints[ropePoints.Length - 3];
-            }
-            else
-            {
-                dir = ropePoints[ropePoints.Length - 1] - ropePoints[ropePoints.Length - 2];
-            }
-            float len = dir.Length();
-            if (len < 1e-4f)
-                dir = new Vector2(0, 1); // default: hang straight down
-            else
-                dir /= len;
-
-            // NaN defense: if physics produced NaN/Infinity, substitute safe values
-            // so the drawing layer never receives invalid coordinates (which would
-            // make CanvasGeometry.CreatePolygon throw and freeze the overlay).
-            if (float.IsNaN(tip.X) || float.IsNaN(tip.Y) ||
-                float.IsInfinity(tip.X) || float.IsInfinity(tip.Y) ||
-                float.IsNaN(dir.X) || float.IsNaN(dir.Y))
-            {
-                App.Log("ComputePendant: NaN/Inf in rope points, using fallback");
-                return new PendantState(Vector2.Zero, new Vector2(0, 1), iconSize);
-            }
-
-            return new PendantState(tip, dir, iconSize);
-        }
-
-        private void DrawRope(CanvasDrawingSession session, AppSettings s)
+        private void DrawRope(CanvasDrawingSession session, AppSettings s, Vector2 liveCursor)
         {
             var pts = _rope.Points;
             if (pts.Length < 2) return;
@@ -282,7 +217,45 @@ namespace MouseBeautifier
             }
 
             // Pendant layout: tip == rope end (Bob), extends along rope direction.
-            var pendant = ComputePendant(pts, (float)s.IconSize);
+            var pendant = PendantGeometry.ComputePendant(pts, (float)s.IconSize);
+
+            // ┌────────────────────────────────────────────────────────────┐
+            // │ 保底机制 (renderer-side safety net) — visible guarantee.    │
+            // │ The rope root (pts[0]) is the cursor; the WHOLE star (its  │
+            // │ farthest tip sits a FULL IconSize beyond the rope end) must    │
+            // │ never be drawn farther from the cursor than the rope's total  │
+            // │ length. The simulator already guarantees this, but we re-assert│
+            // │ it here at draw time so that even a transform/coordinate    │
+            // │ glitch can never fling the star beyond the rope. We clamp the │
+            // │ TIP that BOTH the connector knot and the star are drawn     │
+            // │ from, so they stay welded to the (clamped) rope end.        │
+            // │ Honest version: clamp the bob to ropeLen - IconSize so the   │
+            // │ star's far tip lands exactly at ropeLen (the old code clamped  │
+            // │ the bob to ropeLen, leaving the star at ropeLen+IconSize —   │
+            // │ that is precisely why it looked like the star "flew past".     │
+            // └────────────────────────────────────────────────────────────┘
+            float ropeLen = (float)s.RopeLength;
+            float maxBob = Math.Max(1f, ropeLen - (float)s.IconSize);
+            // BULLETPROOF: clamp against the LIVE cursor passed into Render this
+            // frame (NOT pts[0]). Even if _pos[0] ever desynced from the cursor
+            // that Update/this frame used, the drawn star can never be placed
+            // farther from the real cursor than the rope allows.
+            Vector2 root = liveCursor;
+            Vector2 rel = pendant.Tip - root;
+            float rd = rel.Length();
+            if (rd > maxBob + 1e-3f || float.IsNaN(rd))
+            {
+                Vector2 dirN = (rd < 1e-4f || float.IsNaN(rd))
+                    ? new Vector2(0, 1)
+                    : rel / rd;
+                Vector2 clampedTip = root + dirN * maxBob;
+                pendant = new PendantGeometry.PendantState(clampedTip, pendant.Direction, (float)s.IconSize);
+            }
+
+            // Visible knot at the joint so the rope<->star bond is unambiguous
+            // at any swing angle (the math already guarantees zero separation;
+            // this removes any perceptual gap from anti-aliasing / thin rope).
+            DrawConnector(session, pendant, s);
 
             var icon = GetImageIcon(s.IconType);
             bool hasBitmap = icon != null && icon.SvgSource == null && icon.Frames != null;
@@ -321,7 +294,20 @@ namespace MouseBeautifier
             }
         }
 
-        private void DrawBuiltinIcon(CanvasDrawingSession session, in PendantState p, AppSettings s)
+        /// <summary>
+        /// Small knot drawn exactly at the rope/pendant joint. The geometry
+        /// already guarantees the star's top tip == rope end (zero separation);
+        /// this makes the bond visually unambiguous at any swing angle and
+        /// removes any perceptual gap from a thin rope or anti-aliasing.
+        /// </summary>
+        private void DrawConnector(CanvasDrawingSession session, in PendantGeometry.PendantState p, AppSettings s)
+        {
+            float r = (float)Math.Max(s.RopeWidth * 1.6, s.IconSize * 0.05);
+            var c = ColorsUtil.Parse(s.RopeColor);
+            session.FillCircle(p.Tip.X, p.Tip.Y, r, c);
+        }
+
+        private void DrawBuiltinIcon(CanvasDrawingSession session, in PendantGeometry.PendantState p, AppSettings s)
         {
             var color = ColorsUtil.Parse(s.IconColor);
             float size = (float)s.IconSize;

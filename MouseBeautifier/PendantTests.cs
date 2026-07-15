@@ -53,7 +53,7 @@ namespace MouseBeautifier
                     for (int i = 0; i < 120; i++)
                     {
                         rope.Update(1.0 / 60.0, anchor, s);
-                        var p = EffectRenderer.ComputePendant(rope.Points, iconSize);
+                        var p = PendantGeometry.ComputePendant(rope.Points, iconSize);
                         if (p.Tip != rope.Bob) allEqual = false;
                         checks++;
                     }
@@ -67,7 +67,7 @@ namespace MouseBeautifier
                     {
                         anchor.X += 2f;
                         rope.Update(1.0 / 60.0, anchor, s);
-                        var p = EffectRenderer.ComputePendant(rope.Points, iconSize);
+                        var p = PendantGeometry.ComputePendant(rope.Points, iconSize);
                         if (p.Tip != rope.Bob) allEqual = false;
                         checks++;
                     }
@@ -83,7 +83,7 @@ namespace MouseBeautifier
                         anchor.X += (float)(rng.NextDouble() * 80 - 40);
                         anchor.Y += (float)(rng.NextDouble() * 40 - 20);
                         rope.Update(1.0 / 60.0, anchor, s);
-                        var p = EffectRenderer.ComputePendant(rope.Points, iconSize);
+                        var p = PendantGeometry.ComputePendant(rope.Points, iconSize);
                         if (p.Tip != rope.Bob) allEqual = false;
                         checks++;
                     }
@@ -97,7 +97,7 @@ namespace MouseBeautifier
                     {
                         if (i == 30) anchor.X += 500f;
                         rope.Update(1.0 / 60.0, anchor, s);
-                        var p = EffectRenderer.ComputePendant(rope.Points, iconSize);
+                        var p = PendantGeometry.ComputePendant(rope.Points, iconSize);
                         if (p.Tip != rope.Bob) allEqual = false;
                         checks++;
                     }
@@ -116,7 +116,7 @@ namespace MouseBeautifier
                 {
                     anchor += new Vector2((float)(rng.NextDouble() * 100 - 50), (float)(rng.NextDouble() * 50 - 25));
                     rope.Update(1.0 / 60.0, anchor, s);
-                    var p = EffectRenderer.ComputePendant(rope.Points, iconSize);
+                    var p = PendantGeometry.ComputePendant(rope.Points, iconSize);
                     float len = p.Direction.Length();
                     if (Math.Abs(len - 1f) > 0.01f) allUnit = false;
                 }
@@ -138,7 +138,7 @@ namespace MouseBeautifier
                 {
                     anchor += new Vector2((float)(rng.NextDouble() * 120 - 60), (float)(rng.NextDouble() * 60 - 30));
                     rope.Update(1.0 / 60.0, anchor, s);
-                    var p = EffectRenderer.ComputePendant(rope.Points, iconSize);
+                    var p = PendantGeometry.ComputePendant(rope.Points, iconSize);
                     float d = Vector2.Distance(p.BaseCenter, anchor);
                     if (d > maxDist) maxDist = d;
                 }
@@ -161,7 +161,7 @@ namespace MouseBeautifier
                 {
                     anchor.X += 1.5f; // slow steady motion
                     rope.Update(1.0 / 60.0, anchor, s);
-                    var p = EffectRenderer.ComputePendant(rope.Points, iconSize);
+                    var p = PendantGeometry.ComputePendant(rope.Points, iconSize);
                     float ang = p.AngleRad;
                     if (!first)
                     {
@@ -189,7 +189,7 @@ namespace MouseBeautifier
                 {
                     anchor += new Vector2((float)(rng.NextDouble() * 150 - 75), (float)(rng.NextDouble() * 80 - 40));
                     rope.Update(1.0 / 60.0, anchor, s);
-                    var p = EffectRenderer.ComputePendant(rope.Points, iconSize);
+                    var p = PendantGeometry.ComputePendant(rope.Points, iconSize);
                     float d = Vector2.Distance(p.Tip, anchor);
                     if (d > maxTipDist) maxTipDist = d;
                 }
@@ -207,7 +207,7 @@ namespace MouseBeautifier
                 rope.ApplySettings(s);
                 var anchor = new Vector2(500, 200);
                 for (int i = 0; i < 300; i++) rope.Update(1.0 / 60.0, anchor, s); // settle
-                var p = EffectRenderer.ComputePendant(rope.Points, iconSize);
+                var p = PendantGeometry.ComputePendant(rope.Points, iconSize);
                 bool pointsDown = p.Direction.Y > 0.9f;
                 bool baseBelowTip = p.BaseCenter.Y > p.Tip.Y;
                 Check("下垂方向正确", pointsDown && baseBelowTip,

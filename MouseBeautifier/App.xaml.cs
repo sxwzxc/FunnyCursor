@@ -9,6 +9,7 @@ namespace MouseBeautifier
     public sealed partial class App : Application
     {
         private OverlayHost? _overlay;
+        private SettingsWindow? _settingsWindow;
         private TrayIcon? _tray;
         private bool _shutting;
 
@@ -55,6 +56,13 @@ namespace MouseBeautifier
             {
                 return StressTests.Run();
             }
+            // Star attachment test: proves the five-pointed star's top vertex
+            // stays welded to the rope end under every motion/angle (the user's
+            // "五角星和绳子不会分开" requirement). Pure-math, no Win2D needed.
+            if (args.Length > 0 && args[0] == "--test-star")
+            {
+                return StarAttachmentTests.Run();
+            }
 
             Log("Main start");
             AppDomain.CurrentDomain.UnhandledException += (_, e) =>
@@ -91,14 +99,16 @@ namespace MouseBeautifier
                 _overlay.Start();
                 Log("Overlay started");
 
-                // Settings UI is a pure Win32 dialog (WinUI XAML controls require
-                // framework theme resources that cannot be deployed in this build).
-                SettingsDialog.Show();
-                Log("SettingsDialog shown");
-                SettingsDialog.ExitRequested += () => RequestExit();
+                _settingsWindow = new SettingsWindow();
+                _settingsWindow.ExitRequested += () => RequestExit();
+                _settingsWindow.Activate();
+                Log("SettingsWindow shown");
 
                 _tray = new TrayIcon();
-                _tray.ShowPanelRequested += () => SettingsDialog.Show();
+                _tray.ShowPanelRequested += () =>
+                {
+                    try { _settingsWindow?.Show(); } catch { }
+                };
                 _tray.ExitRequested += () => RequestExit();
                 Log("Tray created");
 
