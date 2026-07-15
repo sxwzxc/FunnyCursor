@@ -271,8 +271,18 @@ namespace MouseBeautifier
                     float half = size / 2f;
 
                     var saved = session.Transform;
-                    session.Transform = Matrix3x2.CreateTranslation(pendant.Tip) *
-                                        Matrix3x2.CreateRotation(pendant.AngleRad);
+                    // Transform order: R * T (rotate local ABOUT origin, then
+                    // translate to Tip). System.Numerics uses row-vector (v' = v*M),
+                    // so M = R*T means "first rotate, then translate" — exactly
+                    // PendantGeometry.TransformPoint: world = R*local + Tip.
+                    // The previous code was T*R, which is (v+Tip)*R — it rotates
+                    // the already-translated point ABOUT THE ORIGIN, flinging the
+                    // star to rotate(Tip) whenever the rope swung (angle!=0).
+                    // That was the root cause of "star flies off when the mouse
+                    // moves": with angle≈0 (stationary) R≈I so T*R≈T looked OK,
+                    // but any swing made the star orbit the screen origin.
+                    session.Transform = Matrix3x2.CreateRotation(pendant.AngleRad) *
+                                        Matrix3x2.CreateTranslation(pendant.Tip);
 
                     var frame = icon.GetFrame(_animTime);
                     if (frame != null)
@@ -316,8 +326,12 @@ namespace MouseBeautifier
             // Transform: origin = tip, +Y axis = rope end direction.
             // The shape is drawn in local space with its TIP at (0,0) and extends
             // in +Y, so after rotation it always points along the rope.
-            session.Transform = Matrix3x2.CreateTranslation(p.Tip) *
-                                Matrix3x2.CreateRotation(p.AngleRad);
+            // Order MUST be R*T (rotate-about-origin then translate to Tip) so
+            // local (0,0) maps to Tip — the non-separation guarantee. Using T*R
+            // instead rotates (v+Tip) about the screen origin, flinging the star
+            // away whenever the rope swings (angle != 0).
+            session.Transform = Matrix3x2.CreateRotation(p.AngleRad) *
+                                Matrix3x2.CreateTranslation(p.Tip);
 
             switch (s.IconType)
             {

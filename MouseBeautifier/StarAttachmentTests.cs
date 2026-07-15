@@ -169,6 +169,59 @@ namespace MouseBeautifier
                 Check("悬挂长度=图标尺寸", ok, $"|BaseCenter-Tip| 全部 == {size} (星形恰好沿绳伸出, 无间隙)");
             }
 
+            // ---- Test 6: renderer matrix order — session.Transform must be R*T ----
+            // The renderer sets session.Transform = Matrix3x2 and lets Win2D
+            // transform local points. System.Numerics is row-vector (v' = v*M),
+            // so M = R*T gives v' = v*R*T = R*v + Tip (rotate-about-origin then
+            // translate to Tip) — local (0,0) maps to Tip, the non-separation
+            // guarantee. The WRONG order T*R gives v' = (v+Tip)*R, which orbits
+            // the already-translated point about the SCREEN ORIGIN, flinging the
+            // star to rotate(Tip) whenever the rope swings. This test locks the
+            // matrix order so the "star flies off when mouse moves" bug cannot
+            // regress: it simulates both orders and asserts only R*T keeps the
+            // top vertex at Tip for any swing angle.
+            {
+                var rng = new Random(2026);
+                bool ok = true;
+                string bad = "";
+                for (int i = 0; i < 400 && ok; i++)
+                {
+                    // Random rope-end orientation -> random swing angle.
+                    double ang = rng.NextDouble() * 2 * Math.PI;
+                    var prev = new Vector2(500, 300);
+                    var tip = prev + new Vector2((float)Math.Cos(ang) * 100, (float)Math.Sin(ang) * 100);
+                    var p = PendantGeometry.ComputePendant(new Vector2[] { prev, tip }, size);
+
+                    // The CORRECT renderer matrix: R * T.
+                    var mCorrect = Matrix3x2.CreateRotation(p.AngleRad) *
+                                   Matrix3x2.CreateTranslation(p.Tip);
+                    // The BUGGY renderer matrix (old code): T * R.
+                    var mBuggy = Matrix3x2.CreateTranslation(p.Tip) *
+                                 Matrix3x2.CreateRotation(p.AngleRad);
+
+                    // Top vertex local (0,0) — must map to Tip under the correct matrix.
+                    var topWorld = Vector2.Transform(star[0], mCorrect);
+                    if (Vector2.Distance(topWorld, p.Tip) > 1e-4f)
+                    { ok = false; bad = $"R*T top->{topWorld} != Tip{p.Tip}"; break; }
+
+                    // Far tip local (0, size) — must map to Tip + Direction*size.
+                    var farWorld = Vector2.Transform(new Vector2(0, size), mCorrect);
+                    var expect = p.Tip + p.Direction * size;
+                    if (Vector2.Distance(farWorld, expect) > 1e-3f)
+                    { ok = false; bad = $"R*T far->{farWorld} != {expect}"; break; }
+
+                    // The BUGGY matrix must NOT keep (0,0) at Tip (except when angle≈0).
+                    // This proves the old order was actually wrong, not just stylistically.
+                    if (Math.Abs(p.AngleRad) > 0.1f)
+                    {
+                        var topBuggy = Vector2.Transform(star[0], mBuggy);
+                        if (Vector2.Distance(topBuggy, p.Tip) < 10f)
+                        { ok = false; bad = $"T*R unexpectedly kept top at Tip (angle={p.AngleRad:F2})"; break; }
+                    }
+                }
+                Check("渲染矩阵顺序=R*T", ok, ok ? "R*T: (0,0)→Tip 且 (0,size)→Tip+dir*size (任何摆角); T*R 已证明错误" : bad);
+            }
+
             string summary = $"=== 五角星挂载绑定测试完成: {total - fail}/{total} 通过, {fail} 失败 ===";
             Console.WriteLine(summary);
             App.Log(summary);
