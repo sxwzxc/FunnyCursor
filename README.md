@@ -13,6 +13,7 @@
    - 绳子顶部锚定在光标处，下方悬挂一个图标。
    - 基于 Verlet 积分模拟重力、阻尼与刚度，随光标速度/加速度自然摆动。
    - **自动朝向**：图标随绳子摆动角度与鼠标移动速度自动调整倾斜（朝向运动方向），静止时保持正立。
+   - **保底机制**：无论鼠标怎么移动 / 物理如何计算，悬挂物（bob）距光标永远 ≤ `RopeLength - IconSize`，悬挂物远端 ≤ `RopeLength`。算法见下方「绳子物理与稳定性」。
    - 图标支持内置矢量形状（五角星 / 圆形 / 方形 / 三角 / 菱形 / 心形 / 笑脸）、**内置图片（🐷 粉色小猪 / 👧 二次元女孩）**或**自定义图片（PNG / SVG / GIF，均保留透明度）**。
    - **GIF 动画**：选择 GIF 自定义图标后自动逐帧播放，循环无卡顿。
    - 渲染统一走 Win2D `DrawImage` / `DrawSvg`，PNG / GIF 的 Alpha 透明度被完整保留。
@@ -43,7 +44,7 @@
 | --- | --- |
 | UI 框架 | WinUI 3（`Microsoft.WindowsAppSDK` 1.6.250602001） |
 | 渲染 | Win2D（`Microsoft.Graphics.Win2D` 1.3.2，`CanvasControl`） |
-| 运行时 | .NET 8（`net8.0-windows10.0.19041.0`） |
+| 运行时 | .NET 10（`net10.0-windows10.0.19041.0`） |
 | 分发 | 自包含非打包（`WindowsPackageType=None`、`WindowsAppSDKSelfContained=true`） |
 | 物理 | 自实现 Verlet 积分绳子模拟 |
 | 窗口 | 纯 Win32 **分层窗口**（`WS_EX_LAYERED`）：Win2D 离屏 `CanvasRenderTarget` 渲染后 `GetPixelBytes` 读回 32 位预乘 ARGB 像素，经 `UpdateLayeredWindow` 逐帧推送；空白像素 alpha=0 完全透明，桌面清晰可见、零模糊；`WS_EX_TRANSPARENT` 点击穿透 + `WS_EX_TOPMOST` 置顶，覆盖多显示器虚拟屏幕 |
@@ -55,7 +56,7 @@
 
 ### 前置条件
 - Windows 10 19041+ / Windows 11
-- .NET 8 SDK
+- .NET 10 SDK
 - Visual Studio 2022（含“使用 C++ 的桌面开发”与 Windows SDK 10.0.19041+）或仅 .NET SDK 命令行
 
 ### Debug
@@ -74,7 +75,7 @@ dotnet build -c Release -p:Platform=x64
 
 ## 运行
 
-构建产物位于 `MouseBeautifier/bin/x64/<Debug|Release>/net8.0-windows10.0.19041.0/`。
+构建产物位于 `MouseBeautifier/bin/x64/<Debug|Release>/net10.0-windows10.0.19041.0/`。
 直接运行 `FunnyCursor.exe` 即可。设置文件保存在：
 
 ```
@@ -110,8 +111,9 @@ MouseBeautifier/
 ├── App.xaml.cs            # 应用入口与生命周期（无 XAML）
 ├── AppInfo.cs             # 版本号 / 作者 / 版权 / 仓库地址（集中管理）
 ├── OverlayHost.cs         # 纯 Win32 分层窗口覆盖层（UpdateLayeredWindow + Win2D 离屏渲染）
-├── SettingsDialog.cs      # 设置面板（纯 Win32 对话框，避开 WinUI 主题资源依赖）
-├── DialogNative.cs        # 设置对话框所需的 Win32 P/Invoke 声明
+├── SettingsWindow.cs      # 现代化设置面板（WinUI 3 纯 C# 窗口，Acrylic 毛玻璃 + 圆角卡片 + 自定义控件）
+├── SettingsDialog.cs      # [已弃用] 旧版 Win32 设置对话框（保留供参考）
+├── DialogNative.cs        # [已弃用] 旧版对话框所需的 Win32 P/Invoke 声明（保留供参考）
 ├── EffectRenderer.cs      # 所有视觉的绘制编排
 ├── IconImage.cs           # 图标加载（PNG/SVG/GIF，含帧动画与透明度）
 ├── ParticleSystem.cs      # 点击粒子与涟漪
@@ -134,3 +136,31 @@ MouseBeautifier/
 - 仅支持 x64 与 Windows 平台。
 - 透明覆盖层依赖 DWM，在远程桌面 / 某些显卡驱动下效果可能受限。
 - 自定义图标使用 Win2D `CanvasBitmap` / `CanvasSVGDocument` 解码，复杂 SVG 可能无法完美渲染。
+
+## 绳子物理与稳定性
+
+悬挂绳子是这个项目最反复出问题的子系统（"五角星乱飞"系列 bug），稳定性由以下两层共同保证：
+
+### 1. 物理层保底 clamp（`RopeSimulator.ClampToAnchor`）
+
+- 段长 = `(RopeLength - IconSize) / 段数`——绳子自然下垂长度即 clamp 目标，**零压缩、零折叠**，避免末端段方向翻转朝上。
+- `Update` 的所有返回路径（正常积分 / NaN 重置 / 首帧初始化）**都执行** `ClampToAnchor`，确保悬挂物（bob）距光标永远 ≤ `RopeLength - IconSize`。
+- 非破坏性：每个点独立径向 clamp，保留链条形状（旧代码重建整条链为直线，视觉上像五角星"飞走"）。
+
+### 2. 渲染层矩阵顺序（`EffectRenderer.DrawRope`）
+
+悬挂物局部坐标的原点 `(0,0)` 是其顶点（焊在绳子末端）。`System.Numerics` 用 row-vector（`v' = v*M`），变换矩阵**必须是 `R * T`**：
+
+```
+v' = v · (R · T) = R · v + Tip
+```
+
+这样 `local(0,0) → Tip`（顶点锚定绳末端，永不分离），`local(0, size) → Tip + Direction*size`（沿绳方向延伸）。
+
+> 历史教训：旧代码写成 `T * R`，展开是 `(v + Tip) · R`——把已平移的点绕**屏幕原点**旋转。鼠标不动时 `angle≈0` 看似正常，一旦绳子摆动 `angle≠0`，五角星就被绕屏幕原点甩到 `rotate(Tip)` 处，正是"鼠标移动后五角星飞离指针"的根因。
+
+### 3. 测试覆盖（`--test-rope` / `--test-pendant` / `--test-stress` / `--test-star`）
+
+- `RopePhysicsTests`：7 场景（静止 / 慢移 / 瞬移 800px / 连续抖动 / 整星≤绳长 / 卡顿跳变 / 摆动物理）。
+- `StarAttachmentTests.Test6` 直接用 `System.Numerics.Matrix3x2` 验证渲染矩阵：断言 `R*T` 让 `(0,0)→Tip` 且 `(0,size)→Tip+dir*size`，同时证明 `T*R` 在 `angle≠0` 时飞离 —— 锁死矩阵顺序防止回归。
+- 共 25 个测试场景全通过。
