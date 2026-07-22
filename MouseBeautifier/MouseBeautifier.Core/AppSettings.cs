@@ -21,6 +21,7 @@ namespace MouseBeautifier.Core
         public string IconColor { get; set; } = "#FFFFC83D";
         public string RopeColor { get; set; } = "#FF9BE7FF";
         public double RopeWidth { get; set; } = 3;
+        public string RopeStyle { get; set; } = "neon";
 
         public bool EnableTrail { get; set; } = true;
         public string TrailColor { get; set; } = "#FF7CF2FF";
@@ -37,6 +38,7 @@ namespace MouseBeautifier.Core
         public double OrbitRadius { get; set; } = 88;
         public double OrbitSpeed { get; set; } = 26;
         public double OrbitSize { get; set; } = 2.8;
+        public double OrbitStrokeWidth { get; set; } = 0.8;
         public string OrbitColor { get; set; } = "#FFA786FF";
 
         public bool StartWithWindows { get; set; }
@@ -64,6 +66,7 @@ namespace MouseBeautifier.Core
             IconColor = defaults.IconColor;
             RopeColor = defaults.RopeColor;
             RopeWidth = defaults.RopeWidth;
+            RopeStyle = defaults.RopeStyle;
 
             EnableTrail = defaults.EnableTrail;
             TrailColor = defaults.TrailColor;
@@ -80,6 +83,7 @@ namespace MouseBeautifier.Core
             OrbitRadius = defaults.OrbitRadius;
             OrbitSpeed = defaults.OrbitSpeed;
             OrbitSize = defaults.OrbitSize;
+            OrbitStrokeWidth = defaults.OrbitStrokeWidth;
             OrbitColor = defaults.OrbitColor;
 
             StartWithWindows = defaults.StartWithWindows;

@@ -204,6 +204,15 @@
                             StepFrequency="1"
                             ValueChanged="SettingChanged" />
                         <ComboBox
+                            x:Name="RopeStyleCombo"
+                            Header="绳子样式"
+                            SelectionChanged="SettingChanged">
+                            <ComboBoxItem Content="霓虹线缆" Tag="neon" />
+                            <ComboBoxItem Content="玻璃光纤" Tag="glass" />
+                            <ComboBoxItem Content="极简细线" Tag="minimal" />
+                            <ComboBoxItem Content="脉冲光带" Tag="pulse" />
+                        </ComboBox>
+                        <ComboBox
                             x:Name="IconTypeCombo"
                             Header="悬挂图标"
                             SelectionChanged="SettingChanged">
@@ -379,6 +388,13 @@
                             Maximum="12"
                             Minimum="0.5"
                             StepFrequency="0.25"
+                            ValueChanged="SettingChanged" />
+                        <Slider
+                            x:Name="OrbitStrokeWidthSlider"
+                            Header="粒子描边宽度"
+                            Maximum="8"
+                            Minimum="0"
+                            StepFrequency="0.1"
                             ValueChanged="SettingChanged" />
                         <Grid ColumnSpacing="10">
                             <Grid.ColumnDefinitions>

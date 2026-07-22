@@ -176,6 +176,10 @@ namespace MouseBeautifier
             float particleSize = float.IsFinite(configuredSize)
                 ? Math.Clamp(configuredSize, 0.5f, 12)
                 : 2.8f;
+            float configuredStrokeWidth = (float)s.OrbitStrokeWidth;
+            float strokeWidth = float.IsFinite(configuredStrokeWidth)
+                ? Math.Clamp(configuredStrokeWidth, 0, 8)
+                : 0.8f;
             Color tint = ColorsUtil.Parse(s.OrbitColor);
             float time = (float)animationTime;
             const float tau = MathF.PI * 2;
@@ -370,10 +374,21 @@ namespace MouseBeautifier
                             visual.Color,
                             visual.Opacity * 0.92f));
 
+                    if (strokeWidth > 0)
+                    {
+                        session.DrawCircle(
+                            visual.Position,
+                            visual.Radius + strokeWidth * 0.5f,
+                            WithOpacity(
+                                visual.Color,
+                                visual.Opacity * 0.86f),
+                            strokeWidth);
+                    }
+
                     Color hotCore = Blend(
                         visual.Color,
                         Color.FromArgb(255, 255, 255, 255),
-                        0.82f);
+                        0.58f);
                     session.FillCircle(
                         visual.Position,
                         Math.Max(0.42f, visual.Radius * 0.34f),
@@ -489,7 +504,9 @@ namespace MouseBeautifier
                 NebulaPalette[first],
                 NebulaPalette[second],
                 amount);
-            color = Blend(color, tint, 0.22f);
+            // Keep the palette variation, but let the user's tint remain the
+            // dominant color so changing the setting is immediately visible.
+            color = Blend(color, tint, 0.72f);
             color.A = tint.A;
             return color;
         }
@@ -519,23 +536,18 @@ namespace MouseBeautifier
             if (pts.Length < 2) return;
 
             var col = ColorsUtil.Parse(s.RopeColor);
+            float configuredWidth = (float)s.RopeWidth;
+            float ropeWidth = float.IsFinite(configuredWidth)
+                ? Math.Clamp(configuredWidth, 1, 20)
+                : 3;
 
-            // Draw the rope with round caps + round joins so segment joints stay
-            // smooth. Previously each segment was a separate DrawLine with default
-            // butt caps, so the rope looked "broken into pieces" when it bent.
-            using var stroke = new CanvasStrokeStyle
-            {
-                LineJoin = CanvasLineJoin.Round,
-                StartCap = CanvasCapStyle.Round,
-                EndCap = CanvasCapStyle.Round,
-            };
-            for (int pass = 0; pass < 3; pass++)
-            {
-                float w = (float)s.RopeWidth * (3 - pass);
-                var c = col; c.A = (byte)(50 * (3 - pass));
-                for (int i = 0; i < pts.Length - 1; i++)
-                    session.DrawLine(pts[i], pts[i + 1], c, w, stroke);
-            }
+            DrawRopeStyle(
+                session,
+                pts,
+                col,
+                ropeWidth,
+                s.RopeStyle,
+                frame.AnimationTime);
 
             // Pendant layout: tip == rope end (Bob), extends along rope direction.
             // The tip is ALWAYS the rope's last drawn point (pts[last]); we never
@@ -582,9 +594,13 @@ namespace MouseBeautifier
                             double imageScale = sourceMax > 0
                                 ? size / sourceMax
                                 : 1;
-                            double width = src.Width * imageScale;
-                            double height = src.Height * imageScale;
-                            var dst = new Rect(-width / 2, 0, width, height);
+                            double imageWidth = src.Width * imageScale;
+                            double imageHeight = src.Height * imageScale;
+                            var dst = new Rect(
+                                -imageWidth / 2,
+                                0,
+                                imageWidth,
+                                imageHeight);
                             session.DrawImage(
                                 imageFrame,
                                 dst,
@@ -611,6 +627,244 @@ namespace MouseBeautifier
             }
         }
 
+        private static void DrawRopeStyle(
+            CanvasDrawingSession session,
+            Vector2[] points,
+            Color color,
+            float width,
+            string? style,
+            double animationTime)
+        {
+            using var stroke = new CanvasStrokeStyle
+            {
+                LineJoin = CanvasLineJoin.Round,
+                StartCap = CanvasCapStyle.Round,
+                EndCap = CanvasCapStyle.Round,
+            };
+
+            switch (style)
+            {
+                case "glass":
+                    DrawGlassRope(session, points, color, width, stroke);
+                    break;
+                case "minimal":
+                    DrawMinimalRope(session, points, color, width, stroke);
+                    break;
+                case "pulse":
+                    DrawPulseRope(
+                        session,
+                        points,
+                        color,
+                        width,
+                        animationTime,
+                        stroke);
+                    break;
+                default:
+                    DrawNeonRope(session, points, color, width, stroke);
+                    break;
+            }
+        }
+
+        private static void DrawNeonRope(
+            CanvasDrawingSession session,
+            Vector2[] points,
+            Color color,
+            float width,
+            CanvasStrokeStyle stroke)
+        {
+            DrawRopeGlow(session, points, color, width, 0.14f, 3.2f, stroke);
+            Color edge = Blend(
+                color,
+                Color.FromArgb(255, 8, 14, 28),
+                0.72f);
+            Color body = Blend(
+                color,
+                Color.FromArgb(255, 255, 255, 255),
+                0.10f);
+            Color highlight = Blend(
+                color,
+                Color.FromArgb(255, 255, 255, 255),
+                0.68f);
+
+            DrawRopeLayer(session, points, edge, width * 1.85f, 0.86f, 0, stroke);
+            DrawRopeLayer(session, points, body, width, 0.94f, 0, stroke);
+            DrawRopeLayer(
+                session,
+                points,
+                highlight,
+                Math.Max(0.55f, width * 0.20f),
+                0.48f,
+                width * 0.18f,
+                stroke);
+        }
+
+        private static void DrawGlassRope(
+            CanvasDrawingSession session,
+            Vector2[] points,
+            Color color,
+            float width,
+            CanvasStrokeStyle stroke)
+        {
+            Color edge = Blend(
+                color,
+                Color.FromArgb(255, 7, 12, 24),
+                0.84f);
+            Color glass = Blend(
+                color,
+                Color.FromArgb(255, 255, 255, 255),
+                0.24f);
+            Color inner = Blend(
+                color,
+                Color.FromArgb(255, 255, 255, 255),
+                0.72f);
+
+            DrawRopeLayer(session, points, edge, width * 2.20f, 0.92f, 0, stroke);
+            DrawRopeLayer(session, points, glass, width * 1.42f, 0.48f, 0, stroke);
+            DrawRopeLayer(
+                session,
+                points,
+                inner,
+                Math.Max(0.65f, width * 0.42f),
+                0.82f,
+                width * 0.20f,
+                stroke);
+        }
+
+        private static void DrawMinimalRope(
+            CanvasDrawingSession session,
+            Vector2[] points,
+            Color color,
+            float width,
+            CanvasStrokeStyle stroke)
+        {
+            Color edge = Blend(
+                color,
+                Color.FromArgb(255, 10, 16, 30),
+                0.52f);
+            Color highlight = Blend(
+                color,
+                Color.FromArgb(255, 255, 255, 255),
+                0.58f);
+
+            DrawRopeLayer(session, points, edge, width * 1.32f, 0.68f, 0, stroke);
+            DrawRopeLayer(session, points, color, width, 0.96f, 0, stroke);
+            DrawRopeLayer(
+                session,
+                points,
+                highlight,
+                Math.Max(0.45f, width * 0.14f),
+                0.38f,
+                width * 0.16f,
+                stroke);
+        }
+
+        private static void DrawPulseRope(
+            CanvasDrawingSession session,
+            Vector2[] points,
+            Color color,
+            float width,
+            double animationTime,
+            CanvasStrokeStyle stroke)
+        {
+            float pulse = 0.5f + 0.5f *
+                MathF.Sin((float)animationTime * 2.4f);
+            float glowOpacity = 0.10f + pulse * 0.16f;
+            float glowWidth = width * (2.8f + pulse * 1.1f);
+            DrawRopeGlow(
+                session,
+                points,
+                color,
+                glowWidth / 3.2f,
+                glowOpacity,
+                3.2f,
+                stroke);
+
+            Color edge = Blend(
+                color,
+                Color.FromArgb(255, 8, 14, 28),
+                0.72f);
+            Color body = Blend(
+                color,
+                Color.FromArgb(255, 255, 255, 255),
+                0.08f + pulse * 0.16f);
+            Color highlight = Blend(
+                color,
+                Color.FromArgb(255, 255, 255, 255),
+                0.64f + pulse * 0.18f);
+
+            DrawRopeLayer(session, points, edge, width * 1.85f, 0.86f, 0, stroke);
+            DrawRopeLayer(session, points, body, width, 0.90f + pulse * 0.08f, 0, stroke);
+            DrawRopeLayer(
+                session,
+                points,
+                highlight,
+                Math.Max(0.55f, width * 0.20f),
+                0.36f + pulse * 0.22f,
+                width * 0.18f,
+                stroke);
+        }
+
+        private static void DrawRopeGlow(
+            CanvasDrawingSession session,
+            Vector2[] points,
+            Color color,
+            float width,
+            float opacity,
+            float widthMultiplier,
+            CanvasStrokeStyle stroke)
+        {
+            CanvasBlend savedBlend = session.Blend;
+            try
+            {
+                session.Blend = CanvasBlend.Add;
+                DrawRopeLayer(
+                    session,
+                    points,
+                    color,
+                    width * widthMultiplier,
+                    opacity,
+                    0,
+                    stroke);
+            }
+            finally
+            {
+                session.Blend = savedBlend;
+            }
+        }
+
+        private static void DrawRopeLayer(
+            CanvasDrawingSession session,
+            Vector2[] points,
+            Color color,
+            float width,
+            float opacity,
+            float offset,
+            CanvasStrokeStyle stroke)
+        {
+            for (int i = 0; i < points.Length - 1; i++)
+            {
+                Vector2 start = points[i];
+                Vector2 end = points[i + 1];
+                Vector2 direction = end - start;
+                float length = direction.Length();
+                if (!float.IsFinite(length) || length < 0.001f)
+                {
+                    continue;
+                }
+
+                Vector2 normal = new(
+                    -direction.Y / length,
+                    direction.X / length);
+                Vector2 shift = normal * offset;
+                session.DrawLine(
+                    start + shift,
+                    end + shift,
+                    WithOpacity(color, opacity),
+                    width,
+                    stroke);
+            }
+        }
+
         /// <summary>
         /// Small knot drawn exactly at the rope/pendant joint. The geometry
         /// already guarantees the star's top tip == rope end (zero separation);
@@ -619,9 +873,26 @@ namespace MouseBeautifier
         /// </summary>
         private void DrawConnector(CanvasDrawingSession session, in PendantGeometry.PendantState p, AppSettings s)
         {
-            float r = (float)Math.Max(s.RopeWidth * 1.6, s.IconSize * 0.05);
-            var c = ColorsUtil.Parse(s.RopeColor);
-            session.FillCircle(p.Tip.X, p.Tip.Y, r, c);
+            float configuredWidth = (float)s.RopeWidth;
+            float width = float.IsFinite(configuredWidth)
+                ? Math.Clamp(configuredWidth, 1, 20)
+                : 3;
+            float r = Math.Max(width * 1.2f, (float)s.IconSize * 0.05f);
+            Color ropeColor = ColorsUtil.Parse(s.RopeColor);
+            Color edge = Blend(
+                ropeColor,
+                Color.FromArgb(255, 8, 14, 28),
+                0.72f);
+            Color core = Blend(
+                ropeColor,
+                Color.FromArgb(255, 255, 255, 255),
+                0.18f);
+            session.FillCircle(p.Tip.X, p.Tip.Y, r, WithOpacity(edge, 0.92f));
+            session.FillCircle(
+                p.Tip.X,
+                p.Tip.Y,
+                r * 0.64f,
+                WithOpacity(core, 0.96f));
         }
 
         private void DrawBuiltinIcon(CanvasDrawingSession session, in PendantGeometry.PendantState p, AppSettings s)

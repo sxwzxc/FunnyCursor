@@ -149,6 +149,7 @@ namespace MouseBeautifier
                 RopeDampingSlider.Value = s.RopeDamping;
                 RopeStiffnessSlider.Value = s.RopeStiffness;
                 RopeWidthSlider.Value = s.RopeWidth;
+                SetComboValue(RopeStyleCombo, s.RopeStyle);
                 SetComboValue(IconTypeCombo, s.IconType);
                 IconSizeSlider.Value = s.IconSize;
                 SetColor(IconColorText, IconColorPicker, s.IconColor);
@@ -165,6 +166,7 @@ namespace MouseBeautifier
                 OrbitRadiusSlider.Value = s.OrbitRadius;
                 OrbitSpeedSlider.Value = s.OrbitSpeed;
                 OrbitSizeSlider.Value = s.OrbitSize;
+                OrbitStrokeWidthSlider.Value = s.OrbitStrokeWidth;
                 SetColor(OrbitColorText, OrbitColorPicker, s.OrbitColor);
 
                 EnableGlowToggle.IsOn = s.EnableGlow;
@@ -272,6 +274,7 @@ namespace MouseBeautifier
             s.RopeDamping = RopeDampingSlider.Value;
             s.RopeStiffness = RopeStiffnessSlider.Value;
             s.RopeWidth = RopeWidthSlider.Value;
+            s.RopeStyle = GetComboValue(RopeStyleCombo, "neon");
             s.IconType = GetComboValue(IconTypeCombo, "star");
             s.IconSize = IconSizeSlider.Value;
             s.IconColor = NormalizeColor(IconColorText);
@@ -288,6 +291,7 @@ namespace MouseBeautifier
             s.OrbitRadius = OrbitRadiusSlider.Value;
             s.OrbitSpeed = OrbitSpeedSlider.Value;
             s.OrbitSize = OrbitSizeSlider.Value;
+            s.OrbitStrokeWidth = OrbitStrokeWidthSlider.Value;
             s.OrbitColor = NormalizeColor(OrbitColorText);
 
             s.EnableGlow = EnableGlowToggle.IsOn;

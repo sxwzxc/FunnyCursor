@@ -29,6 +29,7 @@ public sealed class AppSettingsTests
             IconColor = "#01020304",
             RopeColor = "#05060708",
             RopeWidth = 19,
+            RopeStyle = "pulse",
             EnableTrail = false,
             TrailColor = "#090A0B0C",
             TrailLength = 1.9,
@@ -42,6 +43,7 @@ public sealed class AppSettingsTests
             OrbitRadius = 199,
             OrbitSpeed = -359,
             OrbitSize = 39,
+            OrbitStrokeWidth = 7.5,
             OrbitColor = "#11121314",
             StartWithWindows = true,
         };
