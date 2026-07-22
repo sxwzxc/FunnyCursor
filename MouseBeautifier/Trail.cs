@@ -1,46 +1,81 @@
 using System;
-using System.Collections.Generic;
 using System.Numerics;
 using Microsoft.Graphics.Canvas;
+using Microsoft.Graphics.Canvas.Geometry;
+using MouseBeautifier.Core;
 using Windows.UI;
 
 namespace MouseBeautifier
 {
-    public sealed class Trail
+    /// <summary>Win2D projection of the resampled trail history.</summary>
+    internal sealed class TrailRenderer
     {
-        private readonly List<Vector2> _pts = new();
-        private readonly List<float> _ages = new();
-        private float _maxAge = 0.5f;
-
-        public void Push(Vector2 p, double dt, AppSettings s)
+        public void Render(
+            CanvasDrawingSession session,
+            TrailSimulation trail,
+            Color color,
+            float width)
         {
-            _maxAge = (float)Math.Max(0.05, s.TrailLength);
-            _pts.Add(p);
-            _ages.Add(0f);
-            for (int i = 0; i < _ages.Count; i++) _ages[i] += (float)dt;
-            for (int i = _pts.Count - 1; i >= 0; i--)
+            if (trail.Samples.Count == 0 ||
+                !trail.HasCurrentPoint)
             {
-                if (_ages[i] > _maxAge) { _pts.RemoveAt(i); _ages.RemoveAt(i); }
+                return;
             }
+
+            using var stroke = new CanvasStrokeStyle
+            {
+                StartCap = CanvasCapStyle.Round,
+                EndCap = CanvasCapStyle.Round,
+                LineJoin = CanvasLineJoin.Round,
+            };
+
+            Vector2 previous = trail.Samples[0].Position;
+            for (int i = 1; i < trail.Samples.Count; i++)
+            {
+                TrailSample sample = trail.Samples[i];
+                DrawSegment(
+                    session,
+                    previous,
+                    sample.Position,
+                    sample.Age,
+                    trail.MaximumAge,
+                    color,
+                    width,
+                    stroke);
+                previous = sample.Position;
+            }
+
+            DrawSegment(
+                session,
+                previous,
+                trail.CurrentPoint,
+                0,
+                trail.MaximumAge,
+                color,
+                width,
+                stroke);
         }
 
-        public void Clear()
+        private static void DrawSegment(
+            CanvasDrawingSession session,
+            Vector2 from,
+            Vector2 to,
+            float age,
+            float maximumAge,
+            Color baseColor,
+            float baseWidth,
+            CanvasStrokeStyle stroke)
         {
-            _pts.Clear();
-            _ages.Clear();
-        }
-
-        public void Render(CanvasDrawingSession session, Color color, float width)
-        {
-            if (_pts.Count < 2) return;
-            for (int i = 1; i < _pts.Count; i++)
-            {
-                float t = 1 - _ages[i] / _maxAge; // 1 = fresh
-                var c = color; c.A = (byte)(t * 230);
-                float w = width * t;
-                if (w < 0.5f) w = 0.5f;
-                session.DrawLine(_pts[i - 1].X, _pts[i - 1].Y, _pts[i].X, _pts[i].Y, c, w);
-            }
+            float freshness = 1 -
+                Math.Clamp(age / maximumAge, 0, 1);
+            Color color = baseColor;
+            color.A = (byte)(freshness * 230);
+            session.DrawLine(
+                from,
+                to,
+                color,
+                Math.Max(0.5f, baseWidth * freshness),
+                stroke);
         }
     }
 }

@@ -1,5 +1,6 @@
 using System;
 using System.Numerics;
+using MouseBeautifier.Core;
 
 namespace MouseBeautifier
 {
@@ -220,6 +221,40 @@ namespace MouseBeautifier
                     }
                 }
                 Check("渲染矩阵顺序=R*T", ok, ok ? "R*T: (0,0)→Tip 且 (0,size)→Tip+dir*size (任何摆角); T*R 已证明错误" : bad);
+            }
+
+            // ---- Test 7: preserve monitor/DPI projection ----
+            // OverlaySurface installs screen-pixel -> monitor-local-DIP as the
+            // drawing-session transform. The pendant transform must append that
+            // projection instead of replacing it; otherwise only the pendant is
+            // displaced on non-96-DPI and secondary monitors.
+            {
+                var previous = new Vector2(1710, 640);
+                var tip = new Vector2(1800, 700);
+                var p = PendantGeometry.ComputePendant(
+                    new[] { previous, tip },
+                    size);
+                var projection =
+                    Matrix3x2.CreateTranslation(-1280, -200) *
+                    Matrix3x2.CreateScale(0.8f);
+                Matrix3x2 complete =
+                    PendantGeometry.CreateRenderTransform(p, projection);
+
+                Vector2 renderedTip = Vector2.Transform(Vector2.Zero, complete);
+                Vector2 expectedTip = Vector2.Transform(tip, projection);
+                Vector2 renderedFar = Vector2.Transform(
+                    new Vector2(0, size),
+                    complete);
+                Vector2 expectedFar = Vector2.Transform(
+                    tip + p.Direction * size,
+                    projection);
+                bool ok =
+                    Vector2.Distance(renderedTip, expectedTip) < 1e-3f &&
+                    Vector2.Distance(renderedFar, expectedFar) < 1e-3f;
+                Check(
+                    "悬挂物保留显示器投影",
+                    ok,
+                    $"tip={renderedTip}, expected={expectedTip}");
             }
 
             string summary = $"=== 五角星挂载绑定测试完成: {total - fail}/{total} 通过, {fail} 失败 ===";

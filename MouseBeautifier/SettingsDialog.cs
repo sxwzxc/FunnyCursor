@@ -803,7 +803,7 @@ namespace MouseBeautifier
             {
                 lStructSize = (uint)Marshal.SizeOf<DlgNative.OPENFILENAME>(),
                 hwndOwner = hWnd,
-                lpstrFilter = "图片文件\0*.png;*.jpg;*.jpeg;*.svg;*.gif\0所有文件\0*.*\0\0",
+                lpstrFilter = "图片文件\0*.png;*.jpg;*.jpeg;*.bmp;*.webp;*.gif\0\0",
                 lpstrFile = new string('\0', 512),
                 nMaxFile = 512,
                 lpstrTitle = "选择自定义图标",

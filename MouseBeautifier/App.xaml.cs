@@ -1,16 +1,20 @@
 using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Controls;
+using MouseBeautifier.Core;
 using System;
 using System.IO;
-using WinRT;
+using System.Threading;
 
 namespace MouseBeautifier
 {
     public sealed partial class App : Application
     {
+        private readonly ISettingsService _settingsService =
+            new JsonSettingsService();
         private OverlayHost? _overlay;
-        private SettingsWindow? _settingsWindow;
         private TrayIcon? _tray;
+        private SettingsWindow? _settingsWindow;
+        private Mutex? _singleInstance;
+        private bool _ownsSingleInstance;
         private bool _shutting;
 
         internal static void Log(string msg)
@@ -27,89 +31,51 @@ namespace MouseBeautifier
 
         public App()
         {
-            // NOTE: The settings UI is a pure Win32 dialog (SettingsDialog), NOT a
-            // WinUI XAML window. WinUI's themed controls need framework theme
-            // resources that cannot be deployed in this self-contained build, so a
-            // XAML settings window crashes the process on launch (COMException
-            // 0x80004005). The Win32 dialog avoids that dependency entirely.
-            UnhandledException += (_, e) => Log("App.UnhandledException: " + e.Exception);
-        }
-
-        [STAThread]
-        public static int Main(string[] args)
-        {
-            // Hidden self-test mode: run rope physics tests and exit, so the
-            // stability of the Verlet integrator can be verified headlessly.
-            if (args.Length > 0 && args[0] == "--test-rope")
-            {
-                return RopePhysicsTests.Run();
-            }
-            // Pendant (triangle) binding tests: verifies the triangle's tip stays
-            // glued to the rope end and never detaches under motion.
-            if (args.Length > 0 && args[0] == "--test-pendant")
-            {
-                return PendantTests.Run();
-            }
-            // Stress test: simulate extreme cursor motion to verify the physics
-            // never produces NaN/Infinity or flies off screen.
-            if (args.Length > 0 && args[0] == "--test-stress")
-            {
-                return StressTests.Run();
-            }
-            // Star attachment test: proves the five-pointed star's top vertex
-            // stays welded to the rope end under every motion/angle (the user's
-            // "五角星和绳子不会分开" requirement). Pure-math, no Win2D needed.
-            if (args.Length > 0 && args[0] == "--test-star")
-            {
-                return StarAttachmentTests.Run();
-            }
-
-            Log("Main start");
-            AppDomain.CurrentDomain.UnhandledException += (_, e) =>
-                Log("UnhandledException: " + e.ExceptionObject);
             try
             {
-                WinRT.ComWrappersSupport.InitializeComWrappers();
-                Log("ComWrappers initialized");
-                Application.Start((p) =>
-                {
-                    Log("Application.Start callback -> new App()");
-                    var app = new App();
-                });
-                Log("Application.Start returned");
+                _singleInstance = new Mutex(
+                    true,
+                    @"Local\FunnyCursor.MouseBeautifier.SingleInstance",
+                    out _ownsSingleInstance);
             }
             catch (Exception ex)
             {
-                Log("Main exception: " + ex);
-                throw;
+                Log("Single-instance mutex: " + ex);
+                _singleInstance?.Dispose();
+                _singleInstance = null;
+                _ownsSingleInstance = true;
             }
-            return 0;
+
+            InitializeComponent();
+            UnhandledException += (_, e) => Log("App.UnhandledException: " + e.Exception);
         }
 
         protected override void OnLaunched(LaunchActivatedEventArgs args)
         {
             Log("OnLaunched start");
+            if (!_ownsSingleInstance)
+            {
+                Log("Another FunnyCursor instance is already running");
+                RequestExit();
+                return;
+            }
+
             try
             {
-                SettingsManager.Load();
+                _settingsService.Load();
                 Log("Settings loaded");
 
-                _overlay = new OverlayHost();
+                _overlay = new OverlayHost(_settingsService);
                 Log("OverlayHost created");
                 _overlay.Start();
                 Log("Overlay started");
 
-                _settingsWindow = new SettingsWindow();
-                _settingsWindow.ExitRequested += () => RequestExit();
-                _settingsWindow.Activate();
+                ShowSettingsWindow();
                 Log("SettingsWindow shown");
 
                 _tray = new TrayIcon();
-                _tray.ShowPanelRequested += () =>
-                {
-                    try { _settingsWindow?.Show(); } catch { }
-                };
-                _tray.ExitRequested += () => RequestExit();
+                _tray.ShowPanelRequested += ShowSettingsWindow;
+                _tray.ExitRequested += RequestExit;
                 Log("Tray created");
 
                 Log("OnLaunched done");
@@ -117,7 +83,31 @@ namespace MouseBeautifier
             catch (Exception ex)
             {
                 Log("OnLaunched exception: " + ex);
-                throw;
+                RequestExit();
+            }
+        }
+
+        private void ShowSettingsWindow()
+        {
+            if (_settingsWindow == null)
+            {
+                _settingsWindow = new SettingsWindow(_settingsService);
+                _settingsWindow.ExitRequested += RequestExit;
+                _settingsWindow.Closed += OnSettingsWindowClosed;
+            }
+
+            _settingsWindow.Activate();
+        }
+
+        private void OnSettingsWindowClosed(
+            object sender,
+            WindowEventArgs args)
+        {
+            if (_settingsWindow != null)
+            {
+                _settingsWindow.ExitRequested -= RequestExit;
+                _settingsWindow.Closed -= OnSettingsWindowClosed;
+                _settingsWindow = null;
             }
         }
 
@@ -125,8 +115,75 @@ namespace MouseBeautifier
         {
             if (_shutting) return;
             _shutting = true;
-            try { _tray?.Dispose(); } catch { }
-            Environment.Exit(0);
+
+            try
+            {
+                if (_tray != null)
+                {
+                    _tray.ShowPanelRequested -= ShowSettingsWindow;
+                    _tray.ExitRequested -= RequestExit;
+                    _tray.Dispose();
+                    _tray = null;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log("Shutdown tray: " + ex);
+            }
+
+            try
+            {
+                _overlay?.Dispose();
+                _overlay = null;
+            }
+            catch (Exception ex)
+            {
+                Log("Shutdown overlay: " + ex);
+            }
+
+            try
+            {
+                _settingsService.Save();
+            }
+            catch (Exception ex)
+            {
+                Log("Shutdown settings save: " + ex);
+            }
+
+            try
+            {
+                if (_settingsWindow != null)
+                {
+                    SettingsWindow window = _settingsWindow;
+                    _settingsWindow = null;
+                    window.ExitRequested -= RequestExit;
+                    window.Closed -= OnSettingsWindowClosed;
+                    window.Close();
+                }
+            }
+            catch (Exception ex)
+            {
+                Log("Shutdown settings window: " + ex);
+            }
+
+            try
+            {
+                if (_ownsSingleInstance)
+                {
+                    _singleInstance?.ReleaseMutex();
+                    _ownsSingleInstance = false;
+                }
+
+                _singleInstance?.Dispose();
+                _singleInstance = null;
+            }
+            catch (Exception ex)
+            {
+                Log("Shutdown mutex: " + ex);
+            }
+
+            Log("Shutdown complete");
+            Exit();
         }
     }
 }

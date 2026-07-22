@@ -5,6 +5,14 @@ namespace MouseBeautifier
 {
     internal static class NativeMethods
     {
+        [ComImport]
+        [Guid("905a0fef-bc53-11df-8c49-001e4fc686da")]
+        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        internal interface IBufferByteAccess
+        {
+            void Buffer(out IntPtr value);
+        }
+
         // ---- Window styles ----
         public const int GWL_STYLE = -16;
         public const int GWL_EXSTYLE = -20;
@@ -48,6 +56,8 @@ namespace MouseBeautifier
         public const int SM_YVIRTUALSCREEN = 77;
         public const int SM_CXVIRTUALSCREEN = 78;
         public const int SM_CYVIRTUALSCREEN = 79;
+        public const uint MONITORINFOF_PRIMARY = 0x00000001;
+        public const uint MDT_EFFECTIVE_DPI = 0;
 
         // ---- DWM accent (transparent window) ----
         public const int WCA_ACCENT_POLICY = 19;
@@ -89,11 +99,39 @@ namespace MouseBeautifier
         [UnmanagedFunctionPointer(CallingConvention.Winapi)]
         public delegate IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
+        [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public delegate bool MonitorEnumProc(
+            IntPtr hMonitor,
+            IntPtr hdcMonitor,
+            ref RECT monitorRect,
+            IntPtr data);
+
         [StructLayout(LayoutKind.Sequential)]
         public struct POINT
         {
             public int x;
             public int y;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct RECT
+        {
+            public int left;
+            public int top;
+            public int right;
+            public int bottom;
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        public struct MONITORINFOEX
+        {
+            public int cbSize;
+            public RECT rcMonitor;
+            public RECT rcWork;
+            public uint dwFlags;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+            public string szDevice;
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -177,6 +215,9 @@ namespace MouseBeautifier
         [DllImport("user32.dll", SetLastError = true)]
         public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
 
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        public static extern uint RegisterWindowMessage(string message);
+
         [DllImport("user32.dll")]
         public static extern bool GetCursorPos(out POINT lpPoint);
 
@@ -184,7 +225,31 @@ namespace MouseBeautifier
         public static extern uint GetDpiForSystem();
 
         [DllImport("user32.dll")]
+        public static extern uint GetDpiForWindow(IntPtr hwnd);
+
+        [DllImport("user32.dll")]
         public static extern int GetSystemMetrics(int nIndex);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool EnumDisplayMonitors(
+            IntPtr hdc,
+            IntPtr clipRect,
+            MonitorEnumProc callback,
+            IntPtr data);
+
+        [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool GetMonitorInfo(
+            IntPtr monitor,
+            ref MONITORINFOEX info);
+
+        [DllImport("shcore.dll")]
+        public static extern int GetDpiForMonitor(
+            IntPtr monitor,
+            uint dpiType,
+            out uint dpiX,
+            out uint dpiY);
 
         [DllImport("user32.dll", SetLastError = true)]
         public static extern int SetWindowCompositionAttribute(IntPtr hwnd, ref WINCOMPATTRDATA data);
@@ -203,6 +268,12 @@ namespace MouseBeautifier
 
         [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
         public static extern IntPtr GetModuleHandle(string? lpModuleName);
+
+        [DllImport("kernel32.dll", EntryPoint = "RtlMoveMemory")]
+        public static extern void CopyMemory(
+            IntPtr destination,
+            IntPtr source,
+            UIntPtr length);
 
         [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         public static extern ushort RegisterClass(ref WNDCLASS lpWndClass);
@@ -236,6 +307,9 @@ namespace MouseBeautifier
 
         [DllImport("user32.dll")]
         public static extern bool DestroyMenu(IntPtr hMenu);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool DestroyIcon(IntPtr hIcon);
 
         [DllImport("user32.dll")]
         public static extern bool SetForegroundWindow(IntPtr hWnd);
@@ -281,6 +355,8 @@ namespace MouseBeautifier
         public const uint WM_TIMER = 0x0113;
         public const uint WM_CLOSE = 0x0010;
         public const uint WM_DESTROY = 0x0002;
+        public const uint WM_DPICHANGED = 0x02E0;
+        public const uint WM_DISPLAYCHANGE = 0x007E;
 
         // ---- UpdateLayeredWindow ----
         public const uint ULW_ALPHA = 0x00000002;
@@ -334,7 +410,16 @@ namespace MouseBeautifier
         }
 
         [DllImport("user32.dll", SetLastError = true)]
-        public static extern bool UpdateLayeredWindow(IntPtr hwnd, IntPtr hdcDst, IntPtr pptDst, IntPtr psize, IntPtr hdcSrc, IntPtr pptSrc, uint crKey, ref BLENDFUNCTION pblend, uint dwFlags);
+        public static extern bool UpdateLayeredWindow(
+            IntPtr hwnd,
+            IntPtr hdcDst,
+            ref POINT destination,
+            ref POINT size,
+            IntPtr hdcSrc,
+            ref POINT source,
+            uint colorKey,
+            ref BLENDFUNCTION blend,
+            uint flags);
 
         [DllImport("user32.dll", SetLastError = true)]
         public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);

@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 
 namespace MouseBeautifier
@@ -22,6 +23,11 @@ namespace MouseBeautifier
         private IntPtr _hwnd;
         private IntPtr _hInstance;
         private NativeMethods.NOTIFYICONDATA _nid;
+        private uint _taskbarCreatedMessage;
+        private SafeIconHandle? _ownedIcon;
+        private bool _classRegistered;
+        private bool _iconAdded;
+        private bool _hotkeyRegistered;
         private bool _disposed;
 
         public event Action? ShowPanelRequested;
@@ -34,51 +40,127 @@ namespace MouseBeautifier
 
         private void Create()
         {
-            _hInstance = Marshal.GetHINSTANCE(typeof(TrayIcon).Module);
-            _wndProc = WndProc;
-
-            var wc = new NativeMethods.WNDCLASS
+            try
             {
-                style = 0,
-                lpfnWndProc = Marshal.GetFunctionPointerForDelegate(_wndProc),
-                hInstance = _hInstance,
-                lpszClassName = _className,
-            };
-            NativeMethods.RegisterClass(ref wc);
+                _hInstance = Marshal.GetHINSTANCE(typeof(TrayIcon).Module);
+                _wndProc = WndProc;
+                _taskbarCreatedMessage =
+                    NativeMethods.RegisterWindowMessage(
+                        "TaskbarCreated");
 
-            _hwnd = NativeMethods.CreateWindowEx(0, _className, "", 0, 0, 0, 0, 0,
-                NativeMethods.HWND_MESSAGE, IntPtr.Zero, _hInstance, IntPtr.Zero);
+                var wc = new NativeMethods.WNDCLASS
+                {
+                    style = 0,
+                    lpfnWndProc =
+                        Marshal.GetFunctionPointerForDelegate(_wndProc),
+                    hInstance = _hInstance,
+                    lpszClassName = _className,
+                };
+                if (NativeMethods.RegisterClass(ref wc) == 0)
+                {
+                    throw new Win32Exception(
+                        Marshal.GetLastWin32Error(),
+                        "RegisterClass for tray failed.");
+                }
 
-            _nid = new NativeMethods.NOTIFYICONDATA
-            {
-                cbSize = Marshal.SizeOf<NativeMethods.NOTIFYICONDATA>(),
-                hWnd = _hwnd,
-                uID = 1,
-                uFlags = NativeMethods.NIF_MESSAGE | NativeMethods.NIF_ICON | NativeMethods.NIF_TIP,
-                uCallbackMessage = NativeMethods.WM_TRAY,
-                szTip = "FunnyCursor 鼠标美化",
-            };
-            // Try to load the custom app icon from the output Assets directory; fall back to default.
-            string baseDir = System.IO.Path.GetDirectoryName(typeof(TrayIcon).Assembly.Location) ?? "";
-            string icoPath = System.IO.Path.Combine(baseDir, "Assets", "funnycursor.ico");
-            IntPtr hIcon = System.IO.File.Exists(icoPath)
-                ? NativeMethods.LoadImage(IntPtr.Zero, icoPath, NativeMethods.IMAGE_ICON, 0, 0,
-                    NativeMethods.LR_LOADFROMFILE | NativeMethods.LR_DEFAULTSIZE)
-                : NativeMethods.LoadIcon(IntPtr.Zero, (IntPtr)NativeMethods.IDI_APPLICATION);
-            _nid.hIcon = hIcon != IntPtr.Zero ? hIcon : NativeMethods.LoadIcon(IntPtr.Zero, (IntPtr)NativeMethods.IDI_APPLICATION);
-            NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_ADD, ref _nid);
+                _classRegistered = true;
+                _hwnd = NativeMethods.CreateWindowEx(
+                    0,
+                    _className,
+                    "",
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    NativeMethods.HWND_MESSAGE,
+                    IntPtr.Zero,
+                    _hInstance,
+                    IntPtr.Zero);
+                if (_hwnd == IntPtr.Zero)
+                {
+                    throw new Win32Exception(
+                        Marshal.GetLastWin32Error(),
+                        "CreateWindowEx for tray failed.");
+                }
 
-            // Register a global hotkey for quick exit (Ctrl+Shift+Q).
-            if (!NativeMethods.RegisterHotKey(_hwnd, HOTKEY_ID_EXIT, HOTKEY_MODIFIERS, HOTKEY_VK))
-            {
-                App.Log("RegisterHotKey Ctrl+Shift+Q failed, trying Ctrl+Alt+Q");
-                // Fall back to Ctrl+Alt+Q if the default is taken.
-                if (!NativeMethods.RegisterHotKey(_hwnd, HOTKEY_ID_EXIT, HOTKEY_MODIFIERS_FALLBACK, HOTKEY_VK))
-                    App.Log("RegisterHotKey fallback Ctrl+Alt+Q also failed");
+                _nid = new NativeMethods.NOTIFYICONDATA
+                {
+                    cbSize = Marshal.SizeOf<NativeMethods.NOTIFYICONDATA>(),
+                    hWnd = _hwnd,
+                    uID = 1,
+                    uFlags = NativeMethods.NIF_MESSAGE |
+                        NativeMethods.NIF_ICON |
+                        NativeMethods.NIF_TIP,
+                    uCallbackMessage = NativeMethods.WM_TRAY,
+                    szTip = "FunnyCursor 鼠标美化",
+                };
+                string baseDir = System.IO.Path.GetDirectoryName(
+                    typeof(TrayIcon).Assembly.Location) ?? "";
+                string icoPath = System.IO.Path.Combine(
+                    baseDir,
+                    "Assets",
+                    "funnycursor.ico");
+                if (System.IO.File.Exists(icoPath))
+                {
+                    IntPtr loaded = NativeMethods.LoadImage(
+                        IntPtr.Zero,
+                        icoPath,
+                        NativeMethods.IMAGE_ICON,
+                        0,
+                        0,
+                        NativeMethods.LR_LOADFROMFILE |
+                            NativeMethods.LR_DEFAULTSIZE);
+                    if (loaded != IntPtr.Zero)
+                    {
+                        _ownedIcon = new SafeIconHandle(loaded);
+                    }
+                }
+
+                _nid.hIcon = _ownedIcon?.DangerousGetHandle() ??
+                    NativeMethods.LoadIcon(
+                        IntPtr.Zero,
+                        (IntPtr)NativeMethods.IDI_APPLICATION);
+                if (!NativeMethods.Shell_NotifyIcon(
+                    NativeMethods.NIM_ADD,
+                    ref _nid))
+                {
+                    throw new Win32Exception(
+                        Marshal.GetLastWin32Error(),
+                        "Shell_NotifyIcon add failed.");
+                }
+
+                _iconAdded = true;
+                RegisterExitHotkey();
             }
-            else
+            catch
             {
-                App.Log("RegisterHotKey Ctrl+Shift+Q OK");
+                Dispose();
+                throw;
+            }
+        }
+
+        private void RegisterExitHotkey()
+        {
+            _hotkeyRegistered = NativeMethods.RegisterHotKey(
+                _hwnd,
+                HOTKEY_ID_EXIT,
+                HOTKEY_MODIFIERS,
+                HOTKEY_VK);
+            if (!_hotkeyRegistered)
+            {
+                App.Log(
+                    "RegisterHotKey Ctrl+Shift+Q failed, trying Ctrl+Alt+Q");
+                _hotkeyRegistered = NativeMethods.RegisterHotKey(
+                    _hwnd,
+                    HOTKEY_ID_EXIT,
+                    HOTKEY_MODIFIERS_FALLBACK,
+                    HOTKEY_VK);
+                if (!_hotkeyRegistered)
+                {
+                    App.Log(
+                        "RegisterHotKey fallback Ctrl+Alt+Q also failed");
+                }
             }
         }
 
@@ -94,7 +176,8 @@ namespace MouseBeautifier
                 return IntPtr.Zero;
             }
 
-            if (msg == NativeMethods.WM_TASKBARCREATED)
+            if (_taskbarCreatedMessage != 0 &&
+                msg == _taskbarCreatedMessage)
             {
                 NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_ADD, ref _nid);
                 return IntPtr.Zero;
@@ -124,15 +207,21 @@ namespace MouseBeautifier
 
         private void ShowContextMenu()
         {
-            IntPtr menu = NativeMethods.CreatePopupMenu();
-            NativeMethods.AppendMenu(menu, NativeMethods.MF_STRING, 1, "打开面板");
-            NativeMethods.AppendMenu(menu, NativeMethods.MF_STRING, 2, "退出 (Ctrl+Shift+Q)");
+            using var menu = new SafeMenuHandle(
+                NativeMethods.CreatePopupMenu());
+            if (menu.IsInvalid)
+            {
+                return;
+            }
+
+            IntPtr menuHandle = menu.DangerousGetHandle();
+            NativeMethods.AppendMenu(menuHandle, NativeMethods.MF_STRING, 1, "打开面板");
+            NativeMethods.AppendMenu(menuHandle, NativeMethods.MF_STRING, 2, "退出 (Ctrl+Shift+Q)");
             NativeMethods.GetCursorPos(out var pt);
             NativeMethods.SetForegroundWindow(_hwnd);
-            NativeMethods.TrackPopupMenu(menu,
+            NativeMethods.TrackPopupMenu(menuHandle,
                 NativeMethods.TPM_BOTTOMALIGN | NativeMethods.TPM_LEFTALIGN,
                 pt.x, pt.y, 0, _hwnd, IntPtr.Zero);
-            NativeMethods.DestroyMenu(menu);
         }
 
         public void Dispose()
@@ -141,11 +230,34 @@ namespace MouseBeautifier
             _disposed = true;
             if (_hwnd != IntPtr.Zero)
             {
-                NativeMethods.UnregisterHotKey(_hwnd, HOTKEY_ID_EXIT);
-                NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_DELETE, ref _nid);
+                if (_hotkeyRegistered)
+                {
+                    NativeMethods.UnregisterHotKey(
+                        _hwnd,
+                        HOTKEY_ID_EXIT);
+                    _hotkeyRegistered = false;
+                }
+
+                if (_iconAdded)
+                {
+                    NativeMethods.Shell_NotifyIcon(
+                        NativeMethods.NIM_DELETE,
+                        ref _nid);
+                    _iconAdded = false;
+                }
+
                 NativeMethods.DestroyWindow(_hwnd);
-                NativeMethods.UnregisterClass(_className, _hInstance);
                 _hwnd = IntPtr.Zero;
+            }
+
+            _ownedIcon?.Dispose();
+            _ownedIcon = null;
+            if (_classRegistered)
+            {
+                NativeMethods.UnregisterClass(
+                    _className,
+                    _hInstance);
+                _classRegistered = false;
             }
         }
     }

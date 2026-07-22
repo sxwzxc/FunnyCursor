@@ -1,143 +1,83 @@
 using System;
-using System.IO;
 using System.Numerics;
 using System.Threading.Tasks;
 using Microsoft.Graphics.Canvas;
 using Microsoft.Graphics.Canvas.Brushes;
 using Microsoft.Graphics.Canvas.Geometry;
+using MouseBeautifier.Core;
 using Windows.Foundation;
 using Windows.UI;
 
 namespace MouseBeautifier
 {
     /// <summary>
-    /// Owns all visual state and draws everything onto the Win2D canvas each frame.
-    /// Reads AppSettings live, so control-panel changes apply instantly.
+    /// Stateless Win2D projection of <see cref="EffectWorld"/> plus device-bound
+    /// icon resources. Simulation is exclusively owned by EffectWorld.
     /// </summary>
     public sealed class EffectRenderer : IDisposable
     {
-        private readonly ICanvasResourceCreator _creator;
-        private readonly ParticleSystem _particles = new();
-        private readonly RopeSimulator _rope = new();
-        private readonly Trail _trail = new();
-
-        private IconImage? _customIcon;
-        private IconImage? _pigIcon;
-        private IconImage? _girlIcon;
+        private readonly ISettingsService _settingsService;
+        private readonly ParticleRenderer _particles = new();
+        private readonly TrailRenderer _trail = new();
+        private readonly IconResourceManager _icons;
         private bool _settingsHooked;
 
-        // viewport (physical -> dips conversion)
-        private int _vx, _vy;
-        private double _scale = 1;
-
-        // orientation / animation state
-        private double _animTime;
-        private float _orbitAngle;
-
-        public EffectRenderer(ICanvasResourceCreator creator)
+        public EffectRenderer(
+            ICanvasResourceCreator creator,
+            ISettingsService settingsService)
         {
-            _creator = creator;
-            SettingsManager.Changed += OnSettingsChanged;
+            _settingsService = settingsService ??
+                throw new ArgumentNullException(nameof(settingsService));
+            _icons = new IconResourceManager(creator);
+            _settingsService.Changed += OnSettingsChanged;
             _settingsHooked = true;
-            OnSettingsChanged();
         }
 
         /// <summary>
         /// Loads the bundled + custom icon resources. Call once the CanvasControl's
         /// device is ready (e.g. from the CreateResources event).
         /// </summary>
-        public async void InitResources()
+        public async Task InitializeResourcesAsync()
         {
-            try
-            {
-                _pigIcon = await IconImage.LoadAsync(_creator,
-                    Path.Combine(AppContext.BaseDirectory, "Assets/pig.png"));
-                _girlIcon = await IconImage.LoadAsync(_creator,
-                    Path.Combine(AppContext.BaseDirectory, "Assets/girl.png"));
-                await LoadCustomIconAsync();
-            }
-            catch { /* device not ready yet — Icons simply stay unavailable */ }
+            await _icons.InitializeAsync(AppContext.BaseDirectory);
+            await _icons.ReloadCustomAsync(
+                _settingsService.Current.CustomIconPath);
         }
 
-        public void SetViewport(int vx, int vy, double scale)
+        private void OnSettingsChanged(object? sender, EventArgs e)
         {
-            _vx = vx; _vy = vy; _scale = scale;
-        }
-
-        private void OnSettingsChanged()
-        {
-            _rope.ApplySettings(SettingsManager.Current);
-            _ = LoadCustomIconAsync();
-        }
-
-        private async Task LoadCustomIconAsync()
-        {
-            var path = SettingsManager.Current.CustomIconPath;
-            if (string.IsNullOrEmpty(path) || !File.Exists(path))
-            {
-                _customIcon = null;
-                return;
-            }
-            // SVG is not supported by the layered (GDI-presented) overlay; fall
-            // back to the built-in vector shape instead of loading a vector source.
-            if (Path.GetExtension(path).ToLowerInvariant() == ".svg")
-            {
-                _customIcon = null;
-                return;
-            }
-            try
-            {
-                _customIcon = await IconImage.LoadAsync(_creator, path);
-            }
-            catch { _customIcon = null; }
+            _ = _icons.ReloadCustomAsync(
+                _settingsService.Current.CustomIconPath);
         }
 
         /// <summary>Returns the loaded icon for image-based types (custom / pig / girl), or null for vector shapes.</summary>
         private IconImage? GetImageIcon(string iconType)
         {
-            return iconType switch
-            {
-                "custom" => _customIcon,
-                "pig" => _pigIcon,
-                "girl" => _girlIcon,
-                _ => null,
-            };
+            return _icons.Get(iconType);
         }
 
-        public void Update(double dt, Vector2 cursor, MouseTracker tracker)
+        public void Render(
+            CanvasDrawingSession session,
+            in EffectFrameSnapshot frame)
         {
-            var s = SettingsManager.Current;
-
-            _animTime += dt;
-            if (s.EnableOrbit) _orbitAngle = (_orbitAngle + (float)(s.OrbitSpeed * dt)) % 360f;
-
-            if (s.EnableClickEffects)
-            {
-                while (tracker.TryDequeueClick(out var c))
-                {
-                    float cx = (float)((c.X - _vx) / _scale);
-                    float cy = (float)((c.Y - _vy) / _scale);
-                    _particles.Spawn(new Vector2(cx, cy), s);
-                }
-            }
-
-            _particles.Update(dt, s);
-
-            if (s.EnableTrail) _trail.Push(cursor, dt, s);
-            else _trail.Clear();
-
-            if (s.EnableRope) _rope.Update(dt, cursor, s);
-        }
-
-        public void Render(CanvasDrawingSession session, Vector2 cursor)
-        {
-            var s = SettingsManager.Current;
+            var s = _settingsService.Current;
+            Vector2 cursor = frame.Cursor;
 
             if (s.EnableGlow) DrawGlow(session, cursor, s);
-            if (s.EnableTrail) _trail.Render(session, ColorsUtil.Parse(s.TrailColor), (float)s.TrailWidth);
-            if (s.EnableOrbit) DrawOrbit(session, cursor, s);
-            if (s.EnableRope) DrawRope(session, s, cursor);
-            _particles.Render(session);
+            if (s.EnableTrail)
+                _trail.Render(
+                    session,
+                    frame.Trail,
+                    ColorsUtil.Parse(s.TrailColor),
+                    (float)s.TrailWidth);
+            if (s.EnableOrbit)
+                DrawOrbit(
+                    session,
+                    cursor,
+                    s,
+                    frame.OrbitAngleDegrees);
+            if (s.EnableRope) DrawRope(session, s, frame);
+            _particles.Render(session, frame.Particles, s);
         }
 
         // ---------- Glow ----------
@@ -158,7 +98,11 @@ namespace MouseBeautifier
         }
 
         // ---------- Orbit (环绕旋转粒子) ----------
-        private void DrawOrbit(CanvasDrawingSession session, Vector2 c, AppSettings s)
+        private static void DrawOrbit(
+            CanvasDrawingSession session,
+            Vector2 c,
+            AppSettings s,
+            float orbitAngleDegrees)
         {
             int n = Math.Max(1, (int)s.OrbitCount);
             float radius = (float)s.OrbitRadius;
@@ -176,7 +120,8 @@ namespace MouseBeautifier
             for (int i = 0; i < n; i++)
             {
                 double t = i / (double)n;                       // 0 (head) .. 1 (tail)
-                double a = _orbitAngle * Math.PI / 180.0 + i * 2 * Math.PI / n;
+                double a = orbitAngleDegrees * Math.PI / 180.0 +
+                    i * 2 * Math.PI / n;
                 float px = c.X + (float)Math.Cos(a) * radius;
                 float py = c.Y + (float)Math.Sin(a) * radius;
 
@@ -192,9 +137,12 @@ namespace MouseBeautifier
         // the pure, headless-testable PendantGeometry class — single source of
         // truth shared by the renderer and the StarAttachment test harness.
 
-        private void DrawRope(CanvasDrawingSession session, AppSettings s, Vector2 liveCursor)
+        private void DrawRope(
+            CanvasDrawingSession session,
+            AppSettings s,
+            in EffectFrameSnapshot frame)
         {
-            var pts = _rope.Points;
+            var pts = frame.Rope.Points;
             if (pts.Length < 2) return;
 
             var col = ColorsUtil.Parse(s.RopeColor);
@@ -217,40 +165,13 @@ namespace MouseBeautifier
             }
 
             // Pendant layout: tip == rope end (Bob), extends along rope direction.
+            // The tip is ALWAYS the rope's last drawn point (pts[last]); we never
+            // relocate it. The rope simulator already caps the rope span at
+            // RopeLength, so the pendant hangs naturally off the real rope end.
+            // (An earlier "safety net" clamped the tip to RopeLength - IconSize,
+            // which pulled the pendant inward by up to a full IconSize whenever the
+            // rope was taut — that was the visible rope/pendant separation bug.)
             var pendant = PendantGeometry.ComputePendant(pts, (float)s.IconSize);
-
-            // ┌────────────────────────────────────────────────────────────┐
-            // │ 保底机制 (renderer-side safety net) — visible guarantee.    │
-            // │ The rope root (pts[0]) is the cursor; the WHOLE star (its  │
-            // │ farthest tip sits a FULL IconSize beyond the rope end) must    │
-            // │ never be drawn farther from the cursor than the rope's total  │
-            // │ length. The simulator already guarantees this, but we re-assert│
-            // │ it here at draw time so that even a transform/coordinate    │
-            // │ glitch can never fling the star beyond the rope. We clamp the │
-            // │ TIP that BOTH the connector knot and the star are drawn     │
-            // │ from, so they stay welded to the (clamped) rope end.        │
-            // │ Honest version: clamp the bob to ropeLen - IconSize so the   │
-            // │ star's far tip lands exactly at ropeLen (the old code clamped  │
-            // │ the bob to ropeLen, leaving the star at ropeLen+IconSize —   │
-            // │ that is precisely why it looked like the star "flew past".     │
-            // └────────────────────────────────────────────────────────────┘
-            float ropeLen = (float)s.RopeLength;
-            float maxBob = Math.Max(1f, ropeLen - (float)s.IconSize);
-            // BULLETPROOF: clamp against the LIVE cursor passed into Render this
-            // frame (NOT pts[0]). Even if _pos[0] ever desynced from the cursor
-            // that Update/this frame used, the drawn star can never be placed
-            // farther from the real cursor than the rope allows.
-            Vector2 root = liveCursor;
-            Vector2 rel = pendant.Tip - root;
-            float rd = rel.Length();
-            if (rd > maxBob + 1e-3f || float.IsNaN(rd))
-            {
-                Vector2 dirN = (rd < 1e-4f || float.IsNaN(rd))
-                    ? new Vector2(0, 1)
-                    : rel / rd;
-                Vector2 clampedTip = root + dirN * maxBob;
-                pendant = new PendantGeometry.PendantState(clampedTip, pendant.Direction, (float)s.IconSize);
-            }
 
             // Visible knot at the joint so the rope<->star bond is unambiguous
             // at any swing angle (the math already guarantees zero separation;
@@ -258,40 +179,53 @@ namespace MouseBeautifier
             DrawConnector(session, pendant, s);
 
             var icon = GetImageIcon(s.IconType);
-            bool hasBitmap = icon != null && icon.SvgSource == null && icon.Frames != null;
+            bool hasBitmap = icon?.Frames != null;
             // Wrap pendant drawing in try-catch: if the icon type's geometry fails
             // (e.g. device lost, invalid state), we must NOT let the exception
             // propagate to RenderFrame's catch — that would skip Present() every
             // frame and make ALL effects disappear (the "切换图标后特效消失" bug).
             try
             {
-                if (hasBitmap)
+                if (hasBitmap && icon != null)
                 {
                     float size = (float)s.IconSize;
-                    float half = size / 2f;
 
                     var saved = session.Transform;
-                    // Transform order: R * T (rotate local ABOUT origin, then
-                    // translate to Tip). System.Numerics uses row-vector (v' = v*M),
-                    // so M = R*T means "first rotate, then translate" — exactly
-                    // PendantGeometry.TransformPoint: world = R*local + Tip.
-                    // The previous code was T*R, which is (v+Tip)*R — it rotates
-                    // the already-translated point ABOUT THE ORIGIN, flinging the
-                    // star to rotate(Tip) whenever the rope swung (angle!=0).
-                    // That was the root cause of "star flies off when the mouse
-                    // moves": with angle≈0 (stationary) R≈I so T*R≈T looked OK,
-                    // but any swing made the star orbit the screen origin.
-                    session.Transform = Matrix3x2.CreateRotation(pendant.AngleRad) *
-                                        Matrix3x2.CreateTranslation(pendant.Tip);
-
-                    var frame = icon.GetFrame(_animTime);
-                    if (frame != null)
+                    try
                     {
-                        var dst = new Rect(-half, 0, size, size);
-                        var src = new Rect(0, 0, frame.Size.Width, frame.Size.Height);
-                        session.DrawImage(frame, dst, src, 1.0f, CanvasImageInterpolation.HighQualityCubic);
+                        // Keep the monitor's screen-pixel -> local-DIP projection.
+                        // Replacing it with only R*T made the rope and pendant use
+                        // different coordinate systems, causing a very large gap
+                        // whenever DPI != 96 or the monitor origin was not (0,0).
+                        session.Transform = PendantGeometry.CreateRenderTransform(
+                            pendant,
+                            saved);
+
+                        var imageFrame = icon.GetFrame(frame.AnimationTime);
+                        if (imageFrame != null)
+                        {
+                            Rect src = icon.GetVisibleSourceBounds(imageFrame);
+                            double sourceMax = Math.Max(src.Width, src.Height);
+                            double imageScale = sourceMax > 0
+                                ? size / sourceMax
+                                : 1;
+                            double width = src.Width * imageScale;
+                            double height = src.Height * imageScale;
+                            var dst = new Rect(-width / 2, 0, width, height);
+                            session.DrawImage(
+                                imageFrame,
+                                dst,
+                                src,
+                                1.0f,
+                                CanvasImageInterpolation.HighQualityCubic);
+                        }
                     }
-                    session.Transform = saved;
+                    finally
+                    {
+                        // Never leak the pendant transform into particles rendered
+                        // later in the same drawing session.
+                        session.Transform = saved;
+                    }
                 }
                 else
                 {
@@ -327,44 +261,48 @@ namespace MouseBeautifier
             // The shape is drawn in local space with its TIP at (0,0) and extends
             // in +Y, so after rotation it always points along the rope.
             // Order MUST be R*T (rotate-about-origin then translate to Tip) so
-            // local (0,0) maps to Tip — the non-separation guarantee. Using T*R
-            // instead rotates (v+Tip) about the screen origin, flinging the star
-            // away whenever the rope swings (angle != 0).
-            session.Transform = Matrix3x2.CreateRotation(p.AngleRad) *
-                                Matrix3x2.CreateTranslation(p.Tip);
+            // local (0,0) maps to Tip. The saved transform is then appended so
+            // both the rope and pendant use the same monitor/DPI projection.
+            session.Transform = PendantGeometry.CreateRenderTransform(p, saved);
 
-            switch (s.IconType)
+            try
             {
-                case "circle":
-                    // Circle hangs below the tip: center at (0, size/2).
-                    session.FillCircle(0, size / 2f, size / 2f, color);
-                    break;
-                case "square":
-                    // Square hangs below the tip.
-                    session.FillRectangle(-size / 2f, 0, size, size, color);
-                    break;
-                case "triangle":
-                    // Triangle: tip at origin, base at y=size. This makes it look
-                    // like the rope narrows into a triangle point — "a rope whose
-                    // bottom end IS a triangle" per the user's request.
-                    FillTriangleTip(session, color, size);
-                    break;
-                case "diamond":
-                    // Diamond: tip at origin, widest at y=size/2, bottom point at y=size.
-                    FillDiamondTip(session, color, size);
-                    break;
-                case "heart":
-                    DrawHeart(session, color, size / 2f, size);
-                    break;
-                case "smiley":
-                    DrawSmiley(session, color, size / 2f, size);
-                    break;
-                case "star":
-                default:
-                    FillStarTip(session, color, size);
-                    break;
+                switch (s.IconType)
+                {
+                    case "circle":
+                        // Circle hangs below the tip: center at (0, size/2).
+                        session.FillCircle(0, size / 2f, size / 2f, color);
+                        break;
+                    case "square":
+                        // Square hangs below the tip.
+                        session.FillRectangle(-size / 2f, 0, size, size, color);
+                        break;
+                    case "triangle":
+                        // Triangle: tip at origin, base at y=size. This makes it look
+                        // like the rope narrows into a triangle point — "a rope whose
+                        // bottom end IS a triangle" per the user's request.
+                        FillTriangleTip(session, color, size);
+                        break;
+                    case "diamond":
+                        // Diamond: tip at origin, widest at y=size/2, bottom point at y=size.
+                        FillDiamondTip(session, color, size);
+                        break;
+                    case "heart":
+                        DrawHeart(session, color, size);
+                        break;
+                    case "smiley":
+                        DrawSmiley(session, color, size / 2f, size);
+                        break;
+                    case "star":
+                    default:
+                        FillStarTip(session, color, size);
+                        break;
+                }
             }
-            session.Transform = saved;
+            finally
+            {
+                session.Transform = saved;
+            }
         }
 
         /// <summary>Triangle with tip at (0,0), base at y=size. Width = size*0.9.</summary>
@@ -444,16 +382,38 @@ namespace MouseBeautifier
             s.FillGeometry(geo, c);
         }
 
-        private static void DrawHeart(CanvasDrawingSession s, Color c, float r, float size)
+        private static void DrawHeart(CanvasDrawingSession s, Color c, float size)
         {
             var pts = new Vector2[40];
-            float cy = size / 2f; // center below the tip
+            float minX = float.PositiveInfinity;
+            float maxX = float.NegativeInfinity;
+            float minY = float.PositiveInfinity;
+            float maxY = float.NegativeInfinity;
             for (int i = 0; i < pts.Length; i++)
             {
                 double t = i * 2 * Math.PI / pts.Length;
-                double x = 16 * Math.Pow(Math.Sin(t), 3);
-                double y = 13 * Math.Cos(t) - 5 * Math.Cos(2 * t) - 2 * Math.Cos(3 * t) - Math.Cos(4 * t);
-                pts[i] = new Vector2((float)(x / 16 * r), cy + (float)(-y / 16 * r));
+                float x = (float)(16 * Math.Pow(Math.Sin(t), 3));
+                float y = (float)(
+                    -13 * Math.Cos(t) +
+                    5 * Math.Cos(2 * t) +
+                    2 * Math.Cos(3 * t) +
+                    Math.Cos(4 * t));
+                pts[i] = new Vector2(x, y);
+                minX = Math.Min(minX, x);
+                maxX = Math.Max(maxX, x);
+                minY = Math.Min(minY, y);
+                maxY = Math.Max(maxY, y);
+            }
+
+            // Normalize the visible heart itself (not its mathematical canvas)
+            // so its topmost point is exactly the rope attachment origin.
+            float scale = size / Math.Max(maxX - minX, maxY - minY);
+            float centerX = (minX + maxX) / 2f;
+            for (int i = 0; i < pts.Length; i++)
+            {
+                pts[i] = new Vector2(
+                    (pts[i].X - centerX) * scale,
+                    (pts[i].Y - minY) * scale);
             }
             using var geo = CanvasGeometry.CreatePolygon(s, pts);
             s.FillGeometry(geo, c);
@@ -485,9 +445,11 @@ namespace MouseBeautifier
         {
             if (_settingsHooked)
             {
-                SettingsManager.Changed -= OnSettingsChanged;
+                _settingsService.Changed -= OnSettingsChanged;
                 _settingsHooked = false;
             }
+
+            _icons.Dispose();
         }
     }
 }

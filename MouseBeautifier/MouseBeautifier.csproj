@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <EnableSourceControlManagerQueries>false</EnableSourceControlManagerQueries>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
@@ -12,6 +13,7 @@
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
     <AssemblyName>FunnyCursor</AssemblyName>
     <RootNamespace>MouseBeautifier</RootNamespace>
     <ApplicationIcon>Assets\funnycursor.ico</ApplicationIcon>
@@ -27,22 +29,25 @@
     <Authors>sxwzxc</Authors>
     <Copyright>Copyright © 2026 sxwzxc. All rights reserved.</Copyright>
     <Description>Windows 平台鼠标美化工具：点击特效、悬挂物理挂件、光标拖尾、环绕粒子与光晕。</Description>
-    <!-- PRI / MRT generation is left disabled on purpose: this build environment
-         has no Visual Studio AppxPackage tooling (Microsoft.Build.Packaging.Pri.Tasks.dll),
-         so enabling it breaks the build. Consequently the WinUI framework theme
-         resources (themeresources.xaml / Microsoft.UI.Xaml.pri) are NOT deployed,
-         which means XamlControlsResources and the heavy themed controls
-         (ToggleSwitch / Slider / ComboBox) cannot be used. The settings UI is built
-         only from controls that render without those theme resources. -->
-    <GenerateAppxPackagePris>false</GenerateAppxPackagePris>
-    <AppxGeneratePriEnabled>false</AppxGeneratePriEnabled>
-    <EnableCoreMrtTooling>false</EnableCoreMrtTooling>
-    <WindowsAppSDKBuildIsPackaging>false</WindowsAppSDKBuildIsPackaging>
+    <!-- XAML pages and application resources must be indexed into the app PRI.
+         The Windows App SDK package supplies MakePri through its BuildTools dependency. -->
+    <AppxGeneratePriEnabled>true</AppxGeneratePriEnabled>
+    <EnableCoreMrtTooling>true</EnableCoreMrtTooling>
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools.MSIX" Version="1.7.260610101">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250602001" />
     <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.3.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="MouseBeautifier.Core\**\*.cs" />
+    <Compile Remove="MouseBeautifier.Core.Tests\**\*.cs" />
+    <ProjectReference Include="MouseBeautifier.Core\MouseBeautifier.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>

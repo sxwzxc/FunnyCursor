@@ -1,273 +1,908 @@
 using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Linq;
 using System.Numerics;
 using System.Runtime.InteropServices;
-using System.Threading;
 using Microsoft.Graphics.Canvas;
+using MouseBeautifier.Core;
 using Windows.UI;
+using WinRT;
 
 namespace MouseBeautifier
 {
     /// <summary>
-    /// Transparent, click-through, always-on-top cursor-effect overlay.
-    ///
-    /// Why this is NOT a WinUI 3 Window:
-    /// WinUI 3 windows render through an opaque DComp swap chain, so they only
-    /// become transparent via the DWM accent policy. On this machine the "true
-    /// transparent" accent state renders solid black, while BLURBEHIND blurs the
-    /// desktop behind (unacceptable occlusion). WinUI also ignores the classic
-    /// layered-window color key — we proved that by seeing a solid magenta screen.
-    ///
-    /// The reliable fix is a *raw* Win32 layered window presented with
-    /// UpdateLayeredWindow: we render the effects with Win2D into an off-screen
-    /// CanvasRenderTarget, read the pixels back, and blit them through a 32-bit
-    /// ARGB DIB. Every empty (transparent) pixel stays fully transparent, so the
-    /// desktop behind shows through crisply with zero blur and zero obscuring.
-    /// This is the canonical transparent-overlay technique and works on every
-    /// Windows 10/11 build.
-    ///
-    /// The window lives on the WinUI/App UI thread (WinUI's own message loop
-    /// pumps its messages), so the Win2D device is created on a thread where it
-    /// is known to work.
+    /// Owns one simulation clock and one raw layered window per physical monitor.
+    /// The world advances once; all monitor-local renderers consume the same
+    /// completed snapshot before the next update.
     /// </summary>
     public sealed class OverlayHost : IDisposable
     {
-        private readonly string _className = "FunnyCursorOverlay_" + Guid.NewGuid().ToString("N");
+        private readonly ISettingsService _settingsService;
+        private readonly string _className =
+            "FunnyCursorOverlay_" + Guid.NewGuid().ToString("N");
         private readonly MouseTracker _tracker = new();
-        private readonly System.Diagnostics.Stopwatch _sw = new();
+        private readonly Stopwatch _clock = new();
+        private readonly Dictionary<IntPtr, OverlaySurface> _byMonitor = new();
+        private readonly Dictionary<IntPtr, OverlaySurface> _byWindow = new();
+        private readonly Dictionary<string, long> _lastLog = new();
 
-        private IntPtr _hwnd;
-        private IntPtr _hInstance;
         private NativeMethods.WndProc _wndProc = null!;
+        private IntPtr _instance;
+        private IntPtr _controlWindow;
         private IntPtr _timerId;
-
+        private SafeScreenDcHandle? _screenDc;
         private CanvasDevice? _device;
-        private CanvasRenderTarget? _rt;
-        private EffectRenderer? _renderer;
-
-        private IntPtr _hdcScreen;
-        private IntPtr _hdcMem;
-        private IntPtr _hbm;
-        private IntPtr _ppvBits;
-        private byte[]? _dibBuf;
-
-        private int _cx, _cy, _vx, _vy;
-        private double _scale = 1;
-        private Vector2 _cursor = Vector2.Zero;
+        private EffectWorld? _world;
+        private bool _classRegistered;
+        private bool _layoutDirty;
+        private bool _rendering;
+        private bool _started;
+        private bool _disposed;
         private int _topmostCounter;
-        private bool _busy;
+
+        public OverlayHost(ISettingsService settingsService)
+        {
+            _settingsService = settingsService ??
+                throw new ArgumentNullException(nameof(settingsService));
+        }
 
         public void Start()
         {
-            try { Init(); }
-            catch (Exception ex) { App.Log("Overlay init: " + ex); }
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_started)
+            {
+                return;
+            }
+
+            try
+            {
+                Initialize();
+                _started = true;
+                App.Log(
+                    $"Overlay: ready with {_byMonitor.Count} monitor surface(s)");
+            }
+            catch
+            {
+                DisposeResources();
+                throw;
+            }
         }
 
-        private void Init()
+        private void Initialize()
         {
-            _hInstance = NativeMethods.GetModuleHandle(null);
+            _instance = NativeMethods.GetModuleHandle(null);
             _wndProc = WndProc;
-
-            var wc = new NativeMethods.WNDCLASS
+            var windowClass = new NativeMethods.WNDCLASS
             {
-                style = 0,
-                lpfnWndProc = Marshal.GetFunctionPointerForDelegate(_wndProc),
-                hInstance = _hInstance,
+                lpfnWndProc =
+                    Marshal.GetFunctionPointerForDelegate(_wndProc),
+                hInstance = _instance,
                 lpszClassName = _className,
-                hCursor = IntPtr.Zero,
-                hbrBackground = IntPtr.Zero,
             };
-            if (NativeMethods.RegisterClass(ref wc) == 0)
+            if (NativeMethods.RegisterClass(ref windowClass) == 0)
             {
-                App.Log("Overlay: RegisterClass failed");
-                return;
+                throw LastError("RegisterClass for overlay failed.");
             }
 
-            _hwnd = NativeMethods.CreateWindowEx(
-                (uint)(NativeMethods.WS_EX_LAYERED | NativeMethods.WS_EX_TRANSPARENT
-                     | NativeMethods.WS_EX_TOPMOST | NativeMethods.WS_EX_TOOLWINDOW | NativeMethods.WS_EX_NOACTIVATE),
-                _className, "FunnyCursorOverlay", unchecked((uint)NativeMethods.WS_POPUP),
-                0, 0, 1, 1, IntPtr.Zero, IntPtr.Zero, _hInstance, IntPtr.Zero);
-
-            if (_hwnd == IntPtr.Zero)
+            _classRegistered = true;
+            _controlWindow = NativeMethods.CreateWindowEx(
+                0,
+                _className,
+                "",
+                0,
+                0,
+                0,
+                0,
+                0,
+                NativeMethods.HWND_MESSAGE,
+                IntPtr.Zero,
+                _instance,
+                IntPtr.Zero);
+            if (_controlWindow == IntPtr.Zero)
             {
-                App.Log("Overlay: CreateWindowEx failed, lastError=" + Marshal.GetLastWin32Error());
-                return;
+                throw LastError("CreateWindowEx for overlay control failed.");
             }
-            App.Log("Overlay: window created");
 
-            SetupResources();
-            App.Log("Overlay: resources ready, loop running");
-        }
+            IntPtr dc = NativeMethods.GetDC(IntPtr.Zero);
+            if (dc == IntPtr.Zero)
+            {
+                throw LastError("GetDC for overlay failed.");
+            }
 
-        private void SetupResources()
-        {
-            _vx = NativeMethods.GetSystemMetrics(NativeMethods.SM_XVIRTUALSCREEN);
-            _vy = NativeMethods.GetSystemMetrics(NativeMethods.SM_YVIRTUALSCREEN);
-            _cx = NativeMethods.GetSystemMetrics(NativeMethods.SM_CXVIRTUALSCREEN);
-            _cy = NativeMethods.GetSystemMetrics(NativeMethods.SM_CYVIRTUALSCREEN);
-            _scale = NativeMethods.GetDpiForSystem() / 96.0;
-            if (_cx <= 0 || _cy <= 0) { _cx = 1920; _cy = 1080; _vx = 0; _vy = 0; }
-
+            _screenDc = new SafeScreenDcHandle(dc, IntPtr.Zero);
             _device = CanvasDevice.GetSharedDevice();
-            float dipW = (float)(_cx / _scale);
-            float dipH = (float)(_cy / _scale);
-            // 3-arg ctor => defaults to B8G8R8A8 with CanvasAlphaMode.Premultiplied,
-            // which is exactly what UpdateLayeredWindow + AC_SRC_ALPHA expects.
-            _rt = new CanvasRenderTarget(_device, dipW, dipH, (float)(96 * _scale));
-            using (var ds = _rt.CreateDrawingSession())
-                ds.Clear(Color.FromArgb(0, 0, 0, 0));
+            _world = new EffectWorld(LogThrottled);
+            _tracker.Start();
+            RefreshMonitorSurfaces();
 
-            _renderer = new EffectRenderer(_rt);
-            _renderer.SetViewport(_vx, _vy, _scale);
-            _renderer.InitResources();
-
-            // Install the global low-level mouse hook (needed for click effects).
-            // Must run on the UI thread, which owns the message loop that dispatches
-            // the hook callbacks.
-            try { _tracker.Start(); } catch (Exception ex) { App.Log("Overlay: tracker start: " + ex); }
-
-            // Build a 32-bit ARGB DIB (bottom-up) we push each frame via UpdateLayeredWindow.
-            _hdcScreen = NativeMethods.GetDC(IntPtr.Zero);
-            _hdcMem = NativeMethods.CreateCompatibleDC(_hdcScreen);
-            var bmi = new NativeMethods.BITMAPINFO
+            _timerId = NativeMethods.SetTimer(
+                _controlWindow,
+                (IntPtr)1,
+                1000 / 60,
+                IntPtr.Zero);
+            if (_timerId == IntPtr.Zero)
             {
-                bmiHeader = new NativeMethods.BITMAPINFOHEADER
-                {
-                    biSize = (uint)Marshal.SizeOf<NativeMethods.BITMAPINFOHEADER>(),
-                    biWidth = _cx,
-                    biHeight = _cy,           // positive => bottom-up
-                    biPlanes = 1,
-                    biBitCount = 32,
-                    biCompression = NativeMethods.BI_RGB,
-                    biSizeImage = (uint)(_cx * _cy * 4),
-                }
-            };
-            _hbm = NativeMethods.CreateDIBSection(_hdcScreen, ref bmi, NativeMethods.DIB_RGB_COLORS, out _ppvBits, IntPtr.Zero, 0);
-            NativeMethods.SelectObject(_hdcMem, _hbm);
-            _dibBuf = new byte[_cx * _cy * 4];
+                throw LastError("SetTimer for overlay failed.");
+            }
 
-            NativeMethods.SetWindowPos(_hwnd, (IntPtr)NativeMethods.HWND_TOPMOST, _vx, _vy, _cx, _cy,
-                NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW | NativeMethods.SWP_FRAMECHANGED);
-
-            _sw.Start();
-            _timerId = (IntPtr)1;
-            NativeMethods.SetTimer(_hwnd, _timerId, 1000 / 60, IntPtr.Zero);
+            _clock.Start();
         }
 
-        private void CleanupResources()
+        private IntPtr WndProc(
+            IntPtr window,
+            uint message,
+            IntPtr wParam,
+            IntPtr lParam)
         {
-            if (_timerId != IntPtr.Zero) { NativeMethods.KillTimer(_hwnd, _timerId); _timerId = IntPtr.Zero; }
-            try { _renderer?.Dispose(); } catch { }
-            try { _rt?.Dispose(); } catch { }
-            try { _device?.Dispose(); } catch { }
-            if (_hbm != IntPtr.Zero) { NativeMethods.DeleteObject(_hbm); _hbm = IntPtr.Zero; }
-            if (_hdcMem != IntPtr.Zero) { NativeMethods.DeleteDC(_hdcMem); _hdcMem = IntPtr.Zero; }
-            if (_hdcScreen != IntPtr.Zero) { NativeMethods.ReleaseDC(IntPtr.Zero, _hdcScreen); _hdcScreen = IntPtr.Zero; }
-        }
-
-        private IntPtr WndProc(IntPtr h, uint m, IntPtr w, IntPtr l)
-        {
-            if (m == NativeMethods.WM_TIMER) { RenderFrame(); return IntPtr.Zero; }
-            if (m == NativeMethods.WM_CLOSE) { NativeMethods.DestroyWindow(h); return IntPtr.Zero; }
-            if (m == NativeMethods.WM_DESTROY)
+            if (message == NativeMethods.WM_TIMER &&
+                window == _controlWindow)
             {
-                CleanupResources();
-                try { NativeMethods.UnregisterClass(_className, _hInstance); } catch { }
-                _hwnd = IntPtr.Zero;
+                RenderFrame();
                 return IntPtr.Zero;
             }
-            return NativeMethods.DefWindowProc(h, m, w, l);
+
+            if (message == NativeMethods.WM_DISPLAYCHANGE)
+            {
+                _layoutDirty = true;
+                return IntPtr.Zero;
+            }
+
+            if (message == NativeMethods.WM_DPICHANGED &&
+                _byWindow.TryGetValue(window, out OverlaySurface? surface))
+            {
+                uint packedDpi = unchecked((uint)wParam.ToInt64());
+                uint dpiX = packedDpi & 0xffff;
+                uint dpiY = packedDpi >> 16;
+                NativeMethods.RECT suggested =
+                    Marshal.PtrToStructure<NativeMethods.RECT>(lParam);
+                surface.Resize(
+                    ToPixelRect(suggested),
+                    NormalizeDpi(dpiX),
+                    NormalizeDpi(dpiY),
+                    _device!);
+                _layoutDirty = true;
+                return IntPtr.Zero;
+            }
+
+            if (message == NativeMethods.WM_CLOSE)
+            {
+                NativeMethods.DestroyWindow(window);
+                return IntPtr.Zero;
+            }
+
+            return NativeMethods.DefWindowProc(
+                window,
+                message,
+                wParam,
+                lParam);
         }
 
         private void RenderFrame()
         {
-            if (_busy) return;
-            // If resources aren't ready yet, just skip this tick (do NOT set _busy,
-            // or rendering would stall permanently).
-            if (_rt == null || _renderer == null || _dibBuf == null || _ppvBits == IntPtr.Zero) return;
-            _busy = true;
+            if (_rendering ||
+                _disposed ||
+                _world == null)
+            {
+                return;
+            }
+
+            _rendering = true;
             try
             {
-                double dt = Math.Min(_sw.Elapsed.TotalSeconds, 0.05);
-                _sw.Restart();
-
-                if (++_topmostCounter >= 120)
+                if (_device == null)
                 {
-                    _topmostCounter = 0;
-                    NativeMethods.SetWindowPos(_hwnd, (IntPtr)NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
-                        NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE);
+                    RecoverDevice();
+                    if (_device == null)
+                    {
+                        return;
+                    }
                 }
 
-                _tracker.GetPosition(out int px, out int py);
-                float dx = (float)((px - _vx) / _scale);
-                float dy = (float)((py - _vy) / _scale);
-                _cursor = new Vector2(dx, dy);
+                if (_layoutDirty)
+                {
+                    _layoutDirty = false;
+                    RefreshMonitorSurfaces();
+                }
 
-                _renderer.Update(dt, _cursor, _tracker);
+                double elapsed = _clock.Elapsed.TotalSeconds;
+                _clock.Restart();
+                long timestamp = MouseTracker.GetTimestamp();
+                _tracker.GetPosition(out int cursorX, out int cursorY);
+                Vector2 cursor = new(cursorX, cursorY);
 
-                // Render the effects off-screen, then read the raw premultiplied BGRA
-                // bytes back synchronously (GetPixelBytes is inherited from CanvasBitmap
-                // and is fully synchronous — no async, so no UI-thread deadlock).
-                using var ds = _rt.CreateDrawingSession();
-                ds.Clear(Color.FromArgb(0, 0, 0, 0));
-                _renderer.Render(ds, _cursor);
+                while (_tracker.TryDequeueClick(
+                    timestamp,
+                    out ClickEvent click))
+                {
+                    _world.EnqueueClick(
+                        click.Timestamp,
+                        new Vector2(click.X, click.Y));
+                }
 
-                byte[] pixels = _rt.GetPixelBytes();
-                Present(pixels);
+                _world.AdvanceFrame(
+                    elapsed,
+                    timestamp,
+                    cursor,
+                    _settingsService.Current);
+                EffectFrameSnapshot frame =
+                    _world.CaptureSnapshot(cursor);
+
+                bool refreshTopmost = ++_topmostCounter >= 120;
+                if (refreshTopmost)
+                {
+                    _topmostCounter = 0;
+                }
+
+                foreach (OverlaySurface surface in
+                    _byMonitor.Values)
+                {
+                    try
+                    {
+                        surface.Render(frame, refreshTopmost);
+                    }
+                    catch (Exception ex) when (
+                        _device?.IsDeviceLost(ex.HResult) == true)
+                    {
+                        RecoverDevice();
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        LogThrottled(
+                            $"Overlay render ({surface.DeviceName}): {ex}");
+                    }
+                }
+            }
+            catch (Exception ex) when (
+                _device?.IsDeviceLost(ex.HResult) == true)
+            {
+                RecoverDevice();
             }
             catch (Exception ex)
             {
-                App.Log("Overlay render: " + ex);
+                LogThrottled("Overlay frame: " + ex);
             }
             finally
             {
-                _busy = false;
+                _rendering = false;
             }
         }
 
-        private void Present(byte[] src)
+        private void RecoverDevice()
         {
-            int stride = _cx * 4;
-            // DIB is bottom-up; flip rows while copying. src is top-down BGRA
-            // (premultiplied); the 4th byte (alpha) lands in the DIB's reserved/
-            // alpha slot untouched, which UpdateLayeredWindow uses as the alpha.
-            for (int y = 0; y < _cy; y++)
-            {
-                int srcRow = (_cy - 1 - y) * stride;
-                int dstRow = y * stride;
-                Buffer.BlockCopy(src, srcRow, _dibBuf!, dstRow, stride);
-            }
-            Marshal.Copy(_dibBuf!, 0, _ppvBits, _dibBuf!.Length);
-
-            var pptDst = new NativeMethods.POINT { x = _vx, y = _vy };
-            var pptSrc = new NativeMethods.POINT { x = 0, y = 0 };
-            var psize = new NativeMethods.POINT { x = _cx, y = _cy };
-            var blend = new NativeMethods.BLENDFUNCTION
-            {
-                BlendOp = NativeMethods.AC_SRC_OVER,
-                SourceConstantAlpha = 255,
-                AlphaFormat = NativeMethods.AC_SRC_ALPHA,
-            };
-
-            var g1 = GCHandle.Alloc(pptDst, GCHandleType.Pinned);
-            var g2 = GCHandle.Alloc(pptSrc, GCHandleType.Pinned);
-            var g3 = GCHandle.Alloc(psize, GCHandleType.Pinned);
+            LogThrottled("Overlay: graphics device lost; rebuilding resources");
             try
             {
-                NativeMethods.UpdateLayeredWindow(_hwnd, _hdcScreen, g1.AddrOfPinnedObject(),
-                    g3.AddrOfPinnedObject(), _hdcMem, g2.AddrOfPinnedObject(), 0, ref blend, NativeMethods.ULW_ALPHA);
+                _device?.Dispose();
+                _device = null;
+                CanvasDevice replacement =
+                    CanvasDevice.GetSharedDevice();
+                _device = replacement;
+                foreach (OverlaySurface surface in _byMonitor.Values)
+                {
+                    surface.RecreateDeviceResources(replacement);
+                }
             }
-            finally
+            catch (Exception ex)
             {
-                g1.Free(); g2.Free(); g3.Free();
+                LogThrottled("Overlay device recovery: " + ex);
+                _layoutDirty = true;
             }
         }
+
+        private void RefreshMonitorSurfaces()
+        {
+            if (_device == null || _screenDc == null)
+            {
+                return;
+            }
+
+            IReadOnlyList<MonitorDescription> monitors =
+                EnumerateMonitors();
+            var active = new HashSet<IntPtr>(
+                monitors.Select(monitor => monitor.Handle));
+
+            foreach (IntPtr removed in _byMonitor.Keys
+                .Where(handle => !active.Contains(handle))
+                .ToArray())
+            {
+                OverlaySurface surface = _byMonitor[removed];
+                _byMonitor.Remove(removed);
+                _byWindow.Remove(surface.Window);
+                surface.Dispose();
+            }
+
+            foreach (MonitorDescription monitor in monitors)
+            {
+                if (_byMonitor.TryGetValue(
+                    monitor.Handle,
+                    out OverlaySurface? existing))
+                {
+                    existing.Resize(
+                        monitor.Bounds,
+                        monitor.DpiX,
+                        monitor.DpiY,
+                        _device);
+                    continue;
+                }
+
+                CreateSurface(monitor);
+            }
+        }
+
+        private void CreateSurface(MonitorDescription monitor)
+        {
+            IntPtr window = NativeMethods.CreateWindowEx(
+                (uint)(NativeMethods.WS_EX_LAYERED |
+                    NativeMethods.WS_EX_TRANSPARENT |
+                    NativeMethods.WS_EX_TOPMOST |
+                    NativeMethods.WS_EX_TOOLWINDOW |
+                    NativeMethods.WS_EX_NOACTIVATE),
+                _className,
+                "FunnyCursorOverlay",
+                unchecked((uint)NativeMethods.WS_POPUP),
+                monitor.Bounds.Left,
+                monitor.Bounds.Top,
+                monitor.Bounds.Width,
+                monitor.Bounds.Height,
+                IntPtr.Zero,
+                IntPtr.Zero,
+                _instance,
+                IntPtr.Zero);
+            if (window == IntPtr.Zero)
+            {
+                throw LastError(
+                    $"CreateWindowEx failed for {monitor.DeviceName}.");
+            }
+
+            OverlaySurface? surface = null;
+            try
+            {
+                surface = new OverlaySurface(
+                    window,
+                    monitor,
+                    _screenDc!,
+                    _device!,
+                    _settingsService,
+                    LogThrottled);
+                _byMonitor.Add(monitor.Handle, surface);
+                _byWindow.Add(window, surface);
+            }
+            catch
+            {
+                surface?.Dispose();
+                if (surface == null)
+                {
+                    NativeMethods.DestroyWindow(window);
+                }
+
+                throw;
+            }
+        }
+
+        private static IReadOnlyList<MonitorDescription>
+            EnumerateMonitors()
+        {
+            var monitors = new List<MonitorDescription>();
+            NativeMethods.MonitorEnumProc callback =
+                delegate(
+                    IntPtr handle,
+                    IntPtr monitorDc,
+                    ref NativeMethods.RECT monitorRect,
+                    IntPtr data)
+                {
+                    var info = new NativeMethods.MONITORINFOEX
+                    {
+                        cbSize = Marshal.SizeOf<
+                            NativeMethods.MONITORINFOEX>(),
+                        szDevice = string.Empty,
+                    };
+                    if (!NativeMethods.GetMonitorInfo(
+                        handle,
+                        ref info))
+                    {
+                        return true;
+                    }
+
+                    uint dpiX = 96;
+                    uint dpiY = 96;
+                    if (NativeMethods.GetDpiForMonitor(
+                        handle,
+                        NativeMethods.MDT_EFFECTIVE_DPI,
+                        out uint reportedX,
+                        out uint reportedY) >= 0)
+                    {
+                        dpiX = reportedX;
+                        dpiY = reportedY;
+                    }
+
+                    monitors.Add(new MonitorDescription(
+                        handle,
+                        info.szDevice,
+                        ToPixelRect(info.rcMonitor),
+                        NormalizeDpi(dpiX),
+                        NormalizeDpi(dpiY)));
+                    return true;
+                };
+
+            if (!NativeMethods.EnumDisplayMonitors(
+                IntPtr.Zero,
+                IntPtr.Zero,
+                callback,
+                IntPtr.Zero))
+            {
+                throw LastError("EnumDisplayMonitors failed.");
+            }
+
+            return monitors;
+        }
+
+        private void LogThrottled(string message)
+        {
+            string key = message.Length > 160
+                ? message[..160]
+                : message;
+            long now = Environment.TickCount64;
+            if (_lastLog.TryGetValue(key, out long previous) &&
+                now - previous < 5000)
+            {
+                return;
+            }
+
+            _lastLog[key] = now;
+            App.Log(message);
+        }
+
+        private static PixelRect ToPixelRect(NativeMethods.RECT rect) =>
+            new(
+                rect.left,
+                rect.top,
+                Math.Max(0, rect.right - rect.left),
+                Math.Max(0, rect.bottom - rect.top));
+
+        private static float NormalizeDpi(uint dpi) =>
+            dpi is >= 48 and <= 768 ? dpi : 96;
+
+        private static Win32Exception LastError(string message) =>
+            new(Marshal.GetLastWin32Error(), message);
 
         public void Dispose()
         {
-            if (_hwnd != IntPtr.Zero)
-                NativeMethods.PostMessage(_hwnd, NativeMethods.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
-            try { _tracker.Dispose(); } catch { }
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            DisposeResources();
+            GC.SuppressFinalize(this);
+        }
+
+        private void DisposeResources()
+        {
+            if (_timerId != IntPtr.Zero &&
+                _controlWindow != IntPtr.Zero)
+            {
+                NativeMethods.KillTimer(
+                    _controlWindow,
+                    _timerId);
+                _timerId = IntPtr.Zero;
+            }
+
+            _clock.Stop();
+            _tracker.Dispose();
+
+            foreach (OverlaySurface surface in
+                _byMonitor.Values.ToArray())
+            {
+                surface.Dispose();
+            }
+
+            _byMonitor.Clear();
+            _byWindow.Clear();
+
+            if (_controlWindow != IntPtr.Zero)
+            {
+                NativeMethods.DestroyWindow(_controlWindow);
+                _controlWindow = IntPtr.Zero;
+            }
+
+            _device?.Dispose();
+            _device = null;
+            _screenDc?.Dispose();
+            _screenDc = null;
+            _world = null;
+
+            if (_classRegistered)
+            {
+                NativeMethods.UnregisterClass(
+                    _className,
+                    _instance);
+                _classRegistered = false;
+            }
+
+            _started = false;
+        }
+
+        private readonly record struct MonitorDescription(
+            IntPtr Handle,
+            string DeviceName,
+            PixelRect Bounds,
+            float DpiX,
+            float DpiY);
+
+        private sealed class OverlaySurface : IDisposable
+        {
+            private readonly SafeScreenDcHandle _screenDc;
+            private readonly ISettingsService _settingsService;
+            private readonly Action<string> _log;
+            private CanvasRenderTarget? _target;
+            private EffectRenderer? _renderer;
+            private DibSurface? _dib;
+            private PixelRect _bounds;
+            private float _dpiX;
+            private float _dpiY;
+            private bool _disposed;
+
+            internal OverlaySurface(
+                IntPtr window,
+                MonitorDescription monitor,
+                SafeScreenDcHandle screenDc,
+                CanvasDevice device,
+                ISettingsService settingsService,
+                Action<string> log)
+            {
+                Window = window;
+                DeviceName = monitor.DeviceName;
+                _screenDc = screenDc;
+                _settingsService = settingsService;
+                _log = log;
+                _bounds = monitor.Bounds;
+                _dpiX = monitor.DpiX;
+                _dpiY = monitor.DpiY;
+                try
+                {
+                    CreateDeviceResources(device);
+                    PositionWindow(show: true);
+                }
+                catch
+                {
+                    Dispose();
+                    throw;
+                }
+            }
+
+            internal IntPtr Window { get; }
+            internal string DeviceName { get; }
+
+            internal void Resize(
+                PixelRect bounds,
+                float dpiX,
+                float dpiY,
+                CanvasDevice device)
+            {
+                if (_disposed ||
+                    (_bounds == bounds &&
+                     Math.Abs(_dpiX - dpiX) < 0.01f &&
+                     Math.Abs(_dpiY - dpiY) < 0.01f &&
+                     _target != null &&
+                     _renderer != null &&
+                     _dib != null))
+                {
+                    return;
+                }
+
+                _bounds = bounds;
+                _dpiX = dpiX;
+                _dpiY = dpiY;
+                RecreateDeviceResources(device);
+                PositionWindow(show: true);
+            }
+
+            internal void RecreateDeviceResources(CanvasDevice device)
+            {
+                DisposeDeviceResources();
+                CreateDeviceResources(device);
+            }
+
+            private void CreateDeviceResources(CanvasDevice device)
+            {
+                if (_bounds.IsEmpty)
+                {
+                    throw new InvalidOperationException(
+                        "Cannot create an empty monitor overlay.");
+                }
+
+                CanvasRenderTarget? target = null;
+                EffectRenderer? renderer = null;
+                DibSurface? dib = null;
+                try
+                {
+                    target = new CanvasRenderTarget(
+                        device,
+                        _bounds.Width * 96f / _dpiX,
+                        _bounds.Height * 96f / _dpiY,
+                        _dpiX);
+                    renderer = new EffectRenderer(
+                        target,
+                        _settingsService);
+                    dib = new DibSurface(
+                        _screenDc,
+                        _bounds.Width,
+                        _bounds.Height);
+
+                    _target = target;
+                    _renderer = renderer;
+                    _dib = dib;
+                    _ = InitializeRendererAsync(renderer);
+                }
+                catch
+                {
+                    renderer?.Dispose();
+                    target?.Dispose();
+                    dib?.Dispose();
+                    throw;
+                }
+            }
+
+            private async System.Threading.Tasks.Task
+                InitializeRendererAsync(EffectRenderer renderer)
+            {
+                try
+                {
+                    await renderer.InitializeResourcesAsync();
+                }
+                catch (ObjectDisposedException)
+                {
+                }
+                catch (Exception ex)
+                {
+                    _log(
+                        $"Overlay icon resources ({DeviceName}): {ex.Message}");
+                }
+            }
+
+            internal void Render(
+                in EffectFrameSnapshot frame,
+                bool refreshTopmost)
+            {
+                if (_disposed ||
+                    _target == null ||
+                    _renderer == null ||
+                    _dib == null)
+                {
+                    return;
+                }
+
+                using (var session = _target.CreateDrawingSession())
+                {
+                    session.Clear(Color.FromArgb(0, 0, 0, 0));
+                    session.Transform =
+                        DisplayGeometry
+                            .CreateScreenPixelsToLocalDipsTransform(
+                                _bounds,
+                                _dpiX,
+                                _dpiY);
+                    _renderer.Render(session, frame);
+                }
+
+                _target.GetPixelBytes(_dib.PixelBuffer);
+                _dib.Present(Window, _bounds.Left, _bounds.Top);
+
+                if (refreshTopmost)
+                {
+                    NativeMethods.SetWindowPos(
+                        Window,
+                        (IntPtr)NativeMethods.HWND_TOPMOST,
+                        0,
+                        0,
+                        0,
+                        0,
+                        NativeMethods.SWP_NOACTIVATE |
+                            NativeMethods.SWP_NOMOVE |
+                            NativeMethods.SWP_NOSIZE);
+                }
+            }
+
+            private void PositionWindow(bool show)
+            {
+                uint flags = NativeMethods.SWP_NOACTIVATE |
+                    NativeMethods.SWP_FRAMECHANGED;
+                if (show)
+                {
+                    flags |= NativeMethods.SWP_SHOWWINDOW;
+                }
+
+                if (!NativeMethods.SetWindowPos(
+                    Window,
+                    (IntPtr)NativeMethods.HWND_TOPMOST,
+                    _bounds.Left,
+                    _bounds.Top,
+                    _bounds.Width,
+                    _bounds.Height,
+                    flags))
+                {
+                    throw LastError(
+                        $"SetWindowPos failed for {DeviceName}.");
+                }
+            }
+
+            private void DisposeDeviceResources()
+            {
+                _renderer?.Dispose();
+                _renderer = null;
+                _target?.Dispose();
+                _target = null;
+                _dib?.Dispose();
+                _dib = null;
+            }
+
+            public void Dispose()
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                _disposed = true;
+                DisposeDeviceResources();
+                if (Window != IntPtr.Zero)
+                {
+                    NativeMethods.DestroyWindow(Window);
+                }
+            }
+        }
+
+        private sealed class DibSurface : IDisposable
+        {
+            private readonly SafeScreenDcHandle _screenDc;
+            private SafeMemoryDcHandle? _memoryDc;
+            private SafeGdiObjectHandle? _bitmap;
+            private IntPtr _oldBitmap;
+            private IntPtr _bits;
+            private bool _disposed;
+
+            internal DibSurface(
+                SafeScreenDcHandle screenDc,
+                int width,
+                int height)
+            {
+                _screenDc = screenDc;
+                Width = width;
+                Height = height;
+                ByteCount = checked(width * height * 4);
+                PixelBuffer = new Windows.Storage.Streams.Buffer(
+                    (uint)ByteCount);
+                try
+                {
+                    IntPtr memory = NativeMethods.CreateCompatibleDC(
+                        screenDc.DangerousGetHandle());
+                    if (memory == IntPtr.Zero)
+                    {
+                        throw LastError("CreateCompatibleDC failed.");
+                    }
+
+                    _memoryDc = new SafeMemoryDcHandle(memory);
+                    var info = new NativeMethods.BITMAPINFO
+                    {
+                        bmiHeader = new NativeMethods.BITMAPINFOHEADER
+                        {
+                            biSize = (uint)Marshal.SizeOf<
+                                NativeMethods.BITMAPINFOHEADER>(),
+                            biWidth = width,
+                            biHeight = -height,
+                            biPlanes = 1,
+                            biBitCount = 32,
+                            biCompression = NativeMethods.BI_RGB,
+                            biSizeImage = (uint)ByteCount,
+                        },
+                    };
+                    IntPtr bitmap = NativeMethods.CreateDIBSection(
+                        screenDc.DangerousGetHandle(),
+                        ref info,
+                        NativeMethods.DIB_RGB_COLORS,
+                        out _bits,
+                        IntPtr.Zero,
+                        0);
+                    if (bitmap == IntPtr.Zero ||
+                        _bits == IntPtr.Zero)
+                    {
+                        throw LastError("CreateDIBSection failed.");
+                    }
+
+                    _bitmap = new SafeGdiObjectHandle(bitmap);
+                    _oldBitmap = NativeMethods.SelectObject(
+                        memory,
+                        bitmap);
+                    if (_oldBitmap == IntPtr.Zero ||
+                        _oldBitmap == (IntPtr)(-1))
+                    {
+                        throw LastError(
+                            "SelectObject for DIB failed.");
+                    }
+                }
+                catch
+                {
+                    Dispose();
+                    throw;
+                }
+            }
+
+            internal int Width { get; }
+            internal int Height { get; }
+            internal int ByteCount { get; }
+            internal Windows.Storage.Streams.IBuffer PixelBuffer { get; }
+
+            internal void Present(
+                IntPtr window,
+                int left,
+                int top)
+            {
+                var byteAccess =
+                    PixelBuffer.As<NativeMethods.IBufferByteAccess>();
+                byteAccess.Buffer(out IntPtr sourcePixels);
+                NativeMethods.CopyMemory(
+                    _bits,
+                    sourcePixels,
+                    (UIntPtr)(uint)ByteCount);
+                var destination = new NativeMethods.POINT
+                {
+                    x = left,
+                    y = top,
+                };
+                var source = new NativeMethods.POINT();
+                var size = new NativeMethods.POINT
+                {
+                    x = Width,
+                    y = Height,
+                };
+                var blend = new NativeMethods.BLENDFUNCTION
+                {
+                    BlendOp = NativeMethods.AC_SRC_OVER,
+                    SourceConstantAlpha = 255,
+                    AlphaFormat = NativeMethods.AC_SRC_ALPHA,
+                };
+                if (!NativeMethods.UpdateLayeredWindow(
+                    window,
+                    _screenDc.DangerousGetHandle(),
+                    ref destination,
+                    ref size,
+                    _memoryDc!.DangerousGetHandle(),
+                    ref source,
+                    0,
+                    ref blend,
+                    NativeMethods.ULW_ALPHA))
+                {
+                    throw LastError("UpdateLayeredWindow failed.");
+                }
+            }
+
+            public void Dispose()
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                _disposed = true;
+                if (_memoryDc is { IsInvalid: false } &&
+                    _oldBitmap != IntPtr.Zero &&
+                    _oldBitmap != (IntPtr)(-1))
+                {
+                    NativeMethods.SelectObject(
+                        _memoryDc.DangerousGetHandle(),
+                        _oldBitmap);
+                    _oldBitmap = IntPtr.Zero;
+                }
+
+                _bitmap?.Dispose();
+                _bitmap = null;
+                _bits = IntPtr.Zero;
+                _memoryDc?.Dispose();
+                _memoryDc = null;
+            }
         }
     }
 }

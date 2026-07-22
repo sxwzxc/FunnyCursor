@@ -2,100 +2,10 @@ using System;
 using System.IO;
 using System.Text.Json;
 using Microsoft.Win32;
-using Windows.UI;
+using MouseBeautifier.Core;
 
 namespace MouseBeautifier
 {
-    public sealed class AppSettings
-    {
-        // ---- Click effects ----
-        public bool EnableClickEffects { get; set; } = true;
-        public string ClickPreset { get; set; } = "sparkle";
-        public string ClickColor { get; set; } = "#FF4DA6FF";
-        public int ClickParticleCount { get; set; } = 40;
-        public double ClickSpeed { get; set; } = 600;
-        public double ClickGravity { get; set; } = 900;
-
-        // ---- Rope + hanging icon ----
-        public bool EnableRope { get; set; } = true;
-        public double RopeLength { get; set; } = 170;
-        public int RopeSegments { get; set; } = 18;
-        public double RopeGravity { get; set; } = 1500;
-        public double RopeDamping { get; set; } = 0.9;
-        public double RopeStiffness { get; set; } = 0.6;
-        public string IconType { get; set; } = "star";
-        public string CustomIconPath { get; set; } = "";
-        public double IconSize { get; set; } = 38;
-        public string IconColor { get; set; } = "#FFFFC83D";
-        public string RopeColor { get; set; } = "#FF9BE7FF";
-        public double RopeWidth { get; set; } = 3;
-
-        // ---- Trail ----
-        public bool EnableTrail { get; set; } = true;
-        public string TrailColor { get; set; } = "#FF7CF2FF";
-        public double TrailLength { get; set; } = 0.5;
-        public double TrailWidth { get; set; } = 6;
-
-        // ---- Glow ----
-        public bool EnableGlow { get; set; } = true;
-        public string GlowColor { get; set; } = "#FF66CCFF";
-        public double GlowSize { get; set; } = 64;
-        public double GlowIntensity { get; set; } = 0.5;
-
-        // ---- Orbit (环绕粒子) ----
-        public bool EnableOrbit { get; set; } = false;
-        public int OrbitCount { get; set; } = 12;
-        public double OrbitRadius { get; set; } = 46;
-        public double OrbitSpeed { get; set; } = 90;   // 度/秒
-        public double OrbitSize { get; set; } = 4;
-        public string OrbitColor { get; set; } = "#FFFF9D3D";
-
-        // ---- General ----
-        public bool StartWithWindows { get; set; } = false;
-
-        public void Reset()
-        {
-            EnableClickEffects = true;
-            ClickPreset = "sparkle";
-            ClickColor = "#FF4DA6FF";
-            ClickParticleCount = 40;
-            ClickSpeed = 600;
-            ClickGravity = 900;
-
-            EnableRope = true;
-            RopeLength = 170;
-            RopeSegments = 18;
-            RopeGravity = 1500;
-            RopeDamping = 0.9;
-            RopeStiffness = 0.6;
-            IconType = "star";
-            CustomIconPath = "";
-            IconSize = 38;
-            IconColor = "#FFFFC83D";
-            RopeColor = "#FF9BE7FF";
-            RopeWidth = 3;
-
-            EnableTrail = true;
-            TrailColor = "#FF7CF2FF";
-            TrailLength = 0.5;
-            TrailWidth = 6;
-
-            EnableGlow = true;
-            GlowColor = "#FF66CCFF";
-            GlowSize = 64;
-            GlowIntensity = 0.5;
-
-            EnableOrbit = false;
-            OrbitCount = 12;
-            OrbitRadius = 46;
-            OrbitSpeed = 90;
-            OrbitSize = 4;
-            OrbitColor = "#FFFF9D3D";
-
-            StartWithWindows = false;
-        }
-    }
-
     public static class SettingsManager
     {
         public static AppSettings Current { get; private set; } = new();
@@ -161,19 +71,4 @@ namespace MouseBeautifier
         }
     }
 
-    public static class ColorsUtil
-    {
-        public static Color Parse(string hex)
-        {
-            if (string.IsNullOrWhiteSpace(hex)) return Color.FromArgb(255, 255, 255, 255);
-            var h = hex.Trim().TrimStart('#');
-            if (h.Length == 6) h = "FF" + h;
-            if (h.Length == 8 && uint.TryParse(h, System.Globalization.NumberStyles.HexNumber,
-                System.Globalization.CultureInfo.InvariantCulture, out uint v))
-            {
-                return Color.FromArgb((byte)(v >> 24), (byte)(v >> 16), (byte)(v >> 8), (byte)v);
-            }
-            return Color.FromArgb(255, 255, 255, 255);
-        }
-    }
 }

@@ -1,8 +1,8 @@
 using System;
-using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using System.Threading;
+using MouseBeautifier.Core;
 
 namespace MouseBeautifier
 {
@@ -13,10 +13,18 @@ namespace MouseBeautifier
         public readonly int X; // physical screen pixel
         public readonly int Y;
         public readonly MouseButton Button;
+        public readonly long Timestamp;
 
-        public ClickEvent(int x, int y, MouseButton button)
+        public ClickEvent(
+            int x,
+            int y,
+            MouseButton button,
+            long timestamp)
         {
-            X = x; Y = y; Button = button;
+            X = x;
+            Y = y;
+            Button = button;
+            Timestamp = timestamp;
         }
     }
 
@@ -26,28 +34,42 @@ namespace MouseBeautifier
     /// </summary>
     public sealed class MouseTracker : IDisposable
     {
-        private readonly object _lock = new();
-        private readonly Queue<ClickEvent> _clicks = new();
+        private readonly TimestampedInputQueue<ClickEvent> _clicks =
+            new(256);
         private NativeMethods.LowLevelMouseProc _proc = null!;
-        private IntPtr _hookId = IntPtr.Zero;
+        private SafeHookHandle? _hook;
         private bool _disposed;
 
         public void Start()
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_hook is { IsInvalid: false })
+            {
+                return;
+            }
+
             _proc = HookCallback;
             using var cur = Process.GetCurrentProcess();
             using var mod = cur.MainModule!;
-            _hookId = NativeMethods.SetWindowsHookEx(
-                NativeMethods.WH_MOUSE_LL, _proc, NativeMethods.GetModuleHandle(mod.ModuleName), 0);
+            IntPtr hook = NativeMethods.SetWindowsHookEx(
+                NativeMethods.WH_MOUSE_LL,
+                _proc,
+                NativeMethods.GetModuleHandle(mod.ModuleName),
+                0);
+            if (hook == IntPtr.Zero)
+            {
+                throw new Win32Exception(
+                    Marshal.GetLastWin32Error(),
+                    "SetWindowsHookEx failed.");
+            }
+
+            _hook = new SafeHookHandle(hook);
         }
 
         public void Stop()
         {
-            if (_hookId != IntPtr.Zero)
-            {
-                NativeMethods.UnhookWindowsHookEx(_hookId);
-                _hookId = IntPtr.Zero;
-            }
+            _hook?.Dispose();
+            _hook = null;
         }
 
         private IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
@@ -63,11 +85,21 @@ namespace MouseBeautifier
 
                 if (btn.HasValue)
                 {
-                    lock (_lock)
-                        _clicks.Enqueue(new ClickEvent(ms.pt.x, ms.pt.y, btn.Value));
+                    long timestamp = Stopwatch.GetTimestamp();
+                    _clicks.Enqueue(
+                        timestamp,
+                        new ClickEvent(
+                            ms.pt.x,
+                            ms.pt.y,
+                            btn.Value,
+                            timestamp));
                 }
             }
-            return NativeMethods.CallNextHookEx(_hookId, nCode, wParam, lParam);
+            return NativeMethods.CallNextHookEx(
+                _hook?.DangerousGetHandle() ?? IntPtr.Zero,
+                nCode,
+                wParam,
+                lParam);
         }
 
         /// <summary>Current cursor position in physical screen pixels.</summary>
@@ -77,14 +109,25 @@ namespace MouseBeautifier
             x = p.x; y = p.y;
         }
 
-        public bool TryDequeueClick(out ClickEvent e)
+        public bool TryDequeueClick(
+            long inclusiveTimestamp,
+            out ClickEvent e)
         {
-            lock (_lock)
+            if (_clicks.TryDequeueUpTo(
+                inclusiveTimestamp,
+                out TimestampedInput<ClickEvent> input))
             {
-                if (_clicks.Count > 0) { e = _clicks.Dequeue(); return true; }
+                e = input.Value;
+                return true;
             }
+
             e = default;
             return false;
+        }
+
+        public static long GetTimestamp()
+        {
+            return Stopwatch.GetTimestamp();
         }
 
         public void Dispose()
@@ -94,7 +137,5 @@ namespace MouseBeautifier
             Stop();
             GC.SuppressFinalize(this);
         }
-
-        ~MouseTracker() => Dispose();
     }
 }

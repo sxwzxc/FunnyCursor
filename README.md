@@ -46,11 +46,18 @@
 | 渲染 | Win2D（`Microsoft.Graphics.Win2D` 1.3.2，`CanvasControl`） |
 | 运行时 | .NET 10（`net10.0-windows10.0.19041.0`） |
 | 分发 | 自包含非打包（`WindowsPackageType=None`、`WindowsAppSDKSelfContained=true`） |
-| 物理 | 自实现 Verlet 积分绳子模拟 |
-| 窗口 | 纯 Win32 **分层窗口**（`WS_EX_LAYERED`）：Win2D 离屏 `CanvasRenderTarget` 渲染后 `GetPixelBytes` 读回 32 位预乘 ARGB 像素，经 `UpdateLayeredWindow` 逐帧推送；空白像素 alpha=0 完全透明，桌面清晰可见、零模糊；`WS_EX_TRANSPARENT` 点击穿透 + `WS_EX_TOPMOST` 置顶，覆盖多显示器虚拟屏幕 |
+| 模拟 | 无 UI 依赖的 `FunnyCursor.Core`；120 Hz 固定步长，Verlet 绳子、粒子、拖尾与时间戳输入队列 |
+| 窗口 | 每台物理显示器一个 Win32 **分层窗口**（`WS_EX_LAYERED`）；同一个模拟快照经坐标投影后由各窗口渲染，支持负虚拟屏幕坐标和混合 DPI |
 | 托盘 | Win32 消息窗口 + `Shell_NotifyIcon` + `TrackPopupMenu` |
 
-> 本项目采用**代码优先（Code-Behind / 无 XAML）**方式构建 UI，所有窗口与控件均在 C# 中创建。
+## 架构
+
+- `MouseBeautifier` 是 WinUI 3 外壳：`App.xaml` 提供应用资源，`SettingsWindow.xaml` 定义设置窗口，代码隐藏负责设置绑定、文件选择和生命周期。
+- `FunnyCursor.Core` 不依赖 WinUI / Win2D，集中管理设置模型、固定步长时钟、时间戳输入、粒子、拖尾、绳子和挂件几何，可在无桌面的测试进程中验证。
+- `OverlayHost` 只创建一个 `EffectWorld`。每帧先消费鼠标输入并推进一次模拟，再把同一个只读快照投影到每台物理显示器，避免多屏分别推进导致速度翻倍或状态分叉。
+- 每台显示器拥有独立的 `CanvasRenderTarget`、DIB 和分层窗口。Win2D 输出读回 32 位预乘 BGRA，之后通过 `UpdateLayeredWindow` 提交；窗口保持置顶、无激活且点击穿透。
+- 显示器增删、分辨率变化、`WM_DPICHANGED` 和 Win2D 设备丢失均会触发表面或设备资源重建。原生 DC、GDI 对象、鼠标钩子、菜单和图标由 `SafeHandle` 包装。
+- 设置由 `ISettingsService` 隔离，当前实现写入 `%LOCALAPPDATA%\FunnyCursor\settings.json`，并按需更新当前用户的开机启动注册表项。
 
 ## 编译
 
@@ -68,10 +75,35 @@ dotnet build -c Debug -p:Platform=x64
 ### Release
 ```powershell
 cd MouseBeautifier
-dotnet build -c Release -p:Platform=x64
+dotnet clean FunnyCursor.sln -c Release -p:Platform=x64
+dotnet restore FunnyCursor.sln -p:Platform=x64
+dotnet build FunnyCursor.sln -c Release -p:Platform=x64 --no-restore
+受限环境：
+dotnet build FunnyCursor.sln -c Release -p:Platform=x64 --no-restore -p:EnableSourceControlManagerQueries=false
+dotnet test FunnyCursor.sln -c Release -p:Platform=x64 --no-restore --no-build
 ```
 
 > 首次构建会还原 WinAppSDK 自包含运行时，耗时较长，请耐心等待。
+
+Release x64 成功构建后，主输出目录应至少包含：
+
+- `FunnyCursor.exe`、`FunnyCursor.dll`、`FunnyCursor.Core.dll`
+- `FunnyCursor.pri`（应用与 WinUI 资源索引）
+- `App.xbf`、`SettingsWindow.xbf`（已编译 XAML）
+- `Microsoft.WindowsAppRuntime.dll`、`Microsoft.ui.xaml.dll` 与其他自包含 Windows App SDK 文件
+- `Assets/funnycursor.ico`、`Assets/pig.png`、`Assets/girl.png`
+
+## 自动化测试
+
+测试项目为 `MouseBeautifier.Core.Tests`，当前包含 26 个 xUnit 测试，覆盖：
+
+- 固定步长在 60 / 144 Hz 呈现频率下的一致性与卡顿追帧上限。
+- 时间戳输入的容量、顺序、消费门限及清空后的新时间纪元。
+- 粒子生命周期和数量上限、拖尾等距重采样 / 生命周期 / 点数上限。
+- 绳子静止、瞬移、剧烈抖动、运行中几何参数变化时的有限值与长度约束。
+- 挂件连接点、方向、非法输入回退和 `R * T` 变换顺序。
+- 负坐标、多显示器混合 DPI 往返映射及单一共享模拟快照。
+- 2,000 帧高复杂度无头模拟的宽松耗时与托管分配预算，用于捕获每帧闭包分配等明显性能回归；它不是硬件渲染基准。
 
 ## 运行
 
@@ -108,34 +140,36 @@ dotnet build -c Release -p:Platform=x64
 
 ```
 MouseBeautifier/
-├── App.xaml.cs            # 应用入口与生命周期（无 XAML）
-├── AppInfo.cs             # 版本号 / 作者 / 版权 / 仓库地址（集中管理）
-├── OverlayHost.cs         # 纯 Win32 分层窗口覆盖层（UpdateLayeredWindow + Win2D 离屏渲染）
-├── SettingsWindow.cs      # 现代化设置面板（WinUI 3 纯 C# 窗口，Acrylic 毛玻璃 + 圆角卡片 + 自定义控件）
-├── SettingsDialog.cs      # [已弃用] 旧版 Win32 设置对话框（保留供参考）
-├── DialogNative.cs        # [已弃用] 旧版对话框所需的 Win32 P/Invoke 声明（保留供参考）
-├── EffectRenderer.cs      # 所有视觉的绘制编排
-├── IconImage.cs           # 图标加载（PNG/SVG/GIF，含帧动画与透明度）
-├── ParticleSystem.cs      # 点击粒子与涟漪
-├── RopeSimulator.cs       # Verlet 绳子物理
-├── Trail.cs               # 光标拖尾
-├── MouseTracker.cs        # 全局鼠标钩子 + 光标轮询
-├── TrayIcon.cs            # 系统托盘（消息窗口）
-├── Settings.cs            # 设置模型 / 持久化 / 注册表自启
-├── NativeMethods.cs       # 全部 P/Invoke 声明
-├── app.manifest          # DPI / 兼容 / 权限清单
-├── MouseBeautifier.csproj # 项目配置
-└── Assets/               # 内置资源
-    ├── pig.png            # 🐷 可爱粉色小猪（挂坠）
-    ├── girl.png           # 👧 可爱二次元女孩（挂坠）
-    └── funnycursor.ico   # 应用图标（紫粉蓝渐变 + 光标 + 彩虹拖尾）
+├── App.xaml / App.xaml.cs                  # WinUI 应用资源、单实例与生命周期
+├── SettingsWindow.xaml / .xaml.cs          # Mica 设置窗口及代码隐藏
+├── OverlayHost.cs                          # 每显示器分层窗口、共享模拟时钟与设备恢复
+├── EffectRenderer.cs                       # Win2D 视觉投影
+├── IconResourceManager.cs / IconImage.cs   # PNG/SVG/GIF 等图标资源
+├── MouseTracker.cs / TrayIcon.cs           # 全局输入、托盘与退出快捷键
+├── JsonSettingsService.cs                  # JSON 设置与开机启动注册
+├── NativeMethods.cs / NativeHandles.cs     # P/Invoke 与原生资源安全句柄
+├── MouseBeautifier.Core/
+│   ├── EffectWorld.cs                      # 单一模拟世界与共享帧快照
+│   ├── FixedStepClock.cs                   # 120 Hz 固定步长
+│   ├── TimestampedInputQueue.cs             # 有界线程安全输入
+│   ├── RopeSimulator.cs                    # Verlet 绳子物理
+│   └── DisplayGeometry.cs / PendantGeometry.cs
+├── MouseBeautifier.Core.Tests/             # xUnit 无头回归与性能预算测试
+├── Assets/                                 # 内置图标与挂件图片
+├── app.manifest
+├── MouseBeautifier.csproj
+└── FunnyCursor.sln
 ```
 
 ## 已知限制
 
 - 仅支持 x64 与 Windows 平台。
-- 透明覆盖层依赖 DWM，在远程桌面 / 某些显卡驱动下效果可能受限。
+- 透明覆盖层依赖 DWM、Win2D 和显卡驱动；远程桌面、HDR、独占全屏、显卡驱动重置等环境下的视觉与置顶行为可能不同。
+- 分层窗口每帧执行 GPU 渲染结果读回并复制整屏 BGRA 缓冲；高分辨率、多显示器会增加内存带宽和 CPU/GPU 同步成本，60 FPS 是目标而非实时保证。
+- 混合 DPI 坐标数学已有无头测试，但显示器热插拔、主屏切换、旋转、不同缩放比例与负坐标布局仍需在真实硬件上验证。
+- 自动化测试不创建 WinUI 窗口，也不验证托盘、全局鼠标钩子、点击穿透、Mica、颜色 / 文件选择器、GIF 实际播放或设备丢失后的视觉恢复。
 - 自定义图标使用 Win2D `CanvasBitmap` / `CanvasSVGDocument` 解码，复杂 SVG 可能无法完美渲染。
+- 设置滑块会即时持久化；快速连续拖动时可能产生较多磁盘写入。
 
 ## 绳子物理与稳定性
 
@@ -159,8 +193,9 @@ v' = v · (R · T) = R · v + Tip
 
 > 历史教训：旧代码写成 `T * R`，展开是 `(v + Tip) · R`——把已平移的点绕**屏幕原点**旋转。鼠标不动时 `angle≈0` 看似正常，一旦绳子摆动 `angle≠0`，五角星就被绕屏幕原点甩到 `rotate(Tip)` 处，正是"鼠标移动后五角星飞离指针"的根因。
 
-### 3. 测试覆盖（`--test-rope` / `--test-pendant` / `--test-stress` / `--test-star`）
+### 3. 测试覆盖
 
-- `RopePhysicsTests`：7 场景（静止 / 慢移 / 瞬移 800px / 连续抖动 / 整星≤绳长 / 卡顿跳变 / 摆动物理）。
-- `StarAttachmentTests.Test6` 直接用 `System.Numerics.Matrix3x2` 验证渲染矩阵：断言 `R*T` 让 `(0,0)→Tip` 且 `(0,size)→Tip+dir*size`，同时证明 `T*R` 在 `angle≠0` 时飞离 —— 锁死矩阵顺序防止回归。
-- 共 25 个测试场景全通过。
+- `RopeSimulatorTests` 验证静止收敛、瞬移、剧烈抖动和完整挂件不越界。
+- `PendantGeometryTests` 直接验证连接原点、方向、非法输入回退和 `R*T` 语义。
+- `SimulationRegressionTests` 在输入突发、运行中绳子参数变化及长时间高复杂度模拟下验证容量、有限值、长度和性能预算。
+- 这些测试通过标准 `dotnet test` 运行，不再依赖应用内的 `--test-*` 调试入口。
