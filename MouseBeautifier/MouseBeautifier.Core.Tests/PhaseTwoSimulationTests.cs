@@ -195,11 +195,70 @@ public sealed class EffectWorldTests
             0,
             0.001f);
         Assert.InRange(
-            MathF.Abs(
+            Math.Abs(
                 sixtyHertz.OrbitAngleDegrees -
                 oneFortyFourHertz.OrbitAngleDegrees),
             0,
             0.001f);
+    }
+
+    [Fact]
+    public void OrbitPhaseRemainsContinuousBeyondFullRotation()
+    {
+        AppSettings settings = new()
+        {
+            EnableClickEffects = false,
+            EnableTrail = false,
+            EnableRope = false,
+            EnableOrbit = true,
+            OrbitSpeed = 180,
+        };
+        EffectWorld world = new(randomSeed: 42);
+
+        for (int frame = 0; frame < 180; frame++)
+        {
+            world.AdvanceFrame(
+                1.0 / 60,
+                frame,
+                Vector2.Zero,
+                settings);
+        }
+
+        Assert.InRange(world.OrbitAngleDegrees, 539.9, 540.1);
+    }
+
+    [Fact]
+    public void DisabledOrbitFreezesItsIndependentClock()
+    {
+        AppSettings settings = new()
+        {
+            EnableClickEffects = false,
+            EnableTrail = false,
+            EnableRope = false,
+            EnableOrbit = true,
+            OrbitSpeed = 45,
+        };
+        EffectWorld world = new(randomSeed: 42);
+        world.AdvanceFrame(
+            1.0 / 60,
+            1,
+            Vector2.Zero,
+            settings);
+        double angle = world.OrbitAngleDegrees;
+        double animationTime = world.OrbitAnimationTime;
+
+        settings.EnableOrbit = false;
+        for (int frame = 0; frame < 120; frame++)
+        {
+            world.AdvanceFrame(
+                1.0 / 60,
+                frame + 2,
+                Vector2.Zero,
+                settings);
+        }
+
+        Assert.Equal(angle, world.OrbitAngleDegrees);
+        Assert.Equal(animationTime, world.OrbitAnimationTime);
     }
 
     [Fact]

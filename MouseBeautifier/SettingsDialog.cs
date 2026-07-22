@@ -258,13 +258,13 @@ namespace MouseBeautifier
             AddTrackScaled(hWnd, ID_TRK_TRAILLEN, "拖尾长度(秒)", ref y, 10, 200, SettingsManager.Current.TrailLength, 100);
             AddTrack(hWnd, ID_TRK_TRAILWIDTH, "拖尾宽度", ref y, 2, 40, SettingsManager.Current.TrailWidth);
 
-            // ---- 环绕粒子 ----
-            y = SectionStart(hWnd, ID_HDR_ORBIT, "环绕粒子", y);
-            AddCheckBox(hWnd, ID_CHK_ORBIT, "启用环绕粒子", ref y, SettingsManager.Current.EnableOrbit);
-            AddTrack(hWnd, ID_TRK_ORBITCOUNT, "粒子数量", ref y, 1, 60, SettingsManager.Current.OrbitCount);
-            AddTrack(hWnd, ID_TRK_ORBITRAD, "环绕半径", ref y, 10, 200, SettingsManager.Current.OrbitRadius);
+            // ---- 星云环绕 ----
+            y = SectionStart(hWnd, ID_HDR_ORBIT, "星云环绕", y);
+            AddCheckBox(hWnd, ID_CHK_ORBIT, "启用星云环绕", ref y, SettingsManager.Current.EnableOrbit);
+            AddTrack(hWnd, ID_TRK_ORBITCOUNT, "星尘密度", ref y, 12, 120, SettingsManager.Current.OrbitCount);
+            AddTrack(hWnd, ID_TRK_ORBITRAD, "星云范围", ref y, 10, 260, SettingsManager.Current.OrbitRadius);
             AddTrack(hWnd, ID_TRK_ORBITSPEED, "旋转速度(度/秒)", ref y, 0, 720, SettingsManager.Current.OrbitSpeed + 360);
-            AddTrack(hWnd, ID_TRK_ORBITSIZE, "粒子大小", ref y, 2, 40, SettingsManager.Current.OrbitSize);
+            AddTrack(hWnd, ID_TRK_ORBITSIZE, "发光粒子大小", ref y, 1, 12, SettingsManager.Current.OrbitSize);
             AddColorButton(hWnd, ID_BTN_ORBITCOLOR, "粒子颜色", ref y, SettingsManager.Current.OrbitColor);
 
             // ---- 光标光晕 ----
@@ -735,7 +735,8 @@ namespace MouseBeautifier
             s.EnableOrbit = DlgNative.IsDlgButtonChecked(hWnd, ID_CHK_ORBIT) == 1;
             s.OrbitCount = (int)GetTrackValue(hWnd, ID_TRK_ORBITCOUNT);
             s.OrbitRadius = (int)GetTrackValue(hWnd, ID_TRK_ORBITRAD);
-            s.OrbitSpeed = (int)GetTrackValue(hWnd, ID_TRK_ORBITSPEED);
+            s.OrbitSpeed =
+                (int)GetTrackValue(hWnd, ID_TRK_ORBITSPEED) - 360;
             s.OrbitSize = (int)GetTrackValue(hWnd, ID_TRK_ORBITSIZE);
             s.OrbitColor = GetButtonText(GetChild(hWnd, ID_BTN_ORBITCOLOR));
 

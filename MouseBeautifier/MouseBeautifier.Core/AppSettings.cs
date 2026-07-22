@@ -33,11 +33,11 @@ namespace MouseBeautifier.Core
         public double GlowIntensity { get; set; } = 0.5;
 
         public bool EnableOrbit { get; set; }
-        public int OrbitCount { get; set; } = 12;
-        public double OrbitRadius { get; set; } = 46;
-        public double OrbitSpeed { get; set; } = 90;
-        public double OrbitSize { get; set; } = 4;
-        public string OrbitColor { get; set; } = "#FFFF9D3D";
+        public int OrbitCount { get; set; } = 56;
+        public double OrbitRadius { get; set; } = 88;
+        public double OrbitSpeed { get; set; } = 26;
+        public double OrbitSize { get; set; } = 2.8;
+        public string OrbitColor { get; set; } = "#FFA786FF";
 
         public bool StartWithWindows { get; set; }
 

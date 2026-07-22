@@ -33,7 +33,15 @@ namespace MouseBeautifier
                     0,
                     1);
                 Color color = baseColor;
-                color.A = (byte)(alpha * 220);
+                Color aura = color;
+                aura.A = (byte)(alpha * 42);
+                session.DrawCircle(
+                    ripple.Position.X,
+                    ripple.Position.Y,
+                    ripple.Radius,
+                    aura,
+                    ripple.Width * alpha * 3.2f + 1.5f);
+                color.A = (byte)(alpha * 205);
                 session.DrawCircle(
                     ripple.Position.X,
                     ripple.Position.Y,
@@ -61,32 +69,72 @@ namespace MouseBeautifier
                 if (particle.Kind == ParticleVisualKind.Confetti)
                 {
                     Matrix3x2 saved = session.Transform;
-                    session.Transform = Matrix3x2.CreateRotation(
-                        particle.RotationDegrees *
-                            (float)Math.PI / 180,
-                        particle.Position);
-                    session.FillRectangle(
-                        particle.Position.X - particle.Size,
-                        particle.Position.Y - particle.Size,
-                        particle.Size * 2,
-                        particle.Size * 2,
-                        color);
-                    session.Transform = saved;
+                    try
+                    {
+                        session.Transform = Matrix3x2.CreateRotation(
+                            particle.RotationDegrees *
+                                (float)Math.PI / 180,
+                            particle.Position) *
+                            saved;
+                        session.FillRectangle(
+                            particle.Position.X - particle.Size,
+                            particle.Position.Y - particle.Size,
+                            particle.Size * 2,
+                            particle.Size * 2,
+                            color);
+                    }
+                    finally
+                    {
+                        session.Transform = saved;
+                    }
                 }
                 else
                 {
+                    Color halo = color;
+                    halo.A = (byte)(alpha * 54);
+                    session.FillCircle(
+                        particle.Position.X,
+                        particle.Position.Y,
+                        particle.Size * 2.8f,
+                        halo);
+
                     session.FillCircle(
                         particle.Position.X,
                         particle.Position.Y,
                         particle.Size,
                         color);
-                    Color halo = color;
-                    halo.A = (byte)(alpha * 70);
+
+                    float angle =
+                        particle.RotationDegrees *
+                        (float)Math.PI / 180;
+                    Vector2 axis = new(
+                        MathF.Cos(angle),
+                        MathF.Sin(angle));
+                    Vector2 normal = new(-axis.Y, axis.X);
+                    float rayLength =
+                        particle.Size * (1.4f + alpha);
+                    Color ray = color;
+                    ray.A = (byte)(alpha * 145);
+                    session.DrawLine(
+                        particle.Position - axis * rayLength,
+                        particle.Position + axis * rayLength,
+                        ray,
+                        Math.Max(0.55f, particle.Size * 0.22f));
+                    session.DrawLine(
+                        particle.Position - normal * rayLength * 0.62f,
+                        particle.Position + normal * rayLength * 0.62f,
+                        ray,
+                        Math.Max(0.5f, particle.Size * 0.16f));
+
+                    Color core = Color.FromArgb(
+                        (byte)(alpha * 235),
+                        255,
+                        255,
+                        255);
                     session.FillCircle(
-                        particle.Position.X,
-                        particle.Position.Y,
-                        particle.Size * 2.2f,
-                        halo);
+                        particle.Position,
+                        Math.Max(0.55f, particle.Size * 0.34f),
+                        core);
                 }
             }
         }

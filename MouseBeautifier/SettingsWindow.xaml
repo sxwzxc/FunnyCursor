@@ -19,13 +19,12 @@
         </Grid.RowDefinitions>
 
         <Border
-            Padding="28,20,28,20"
+            Padding="32,20,32,20"
             Background="{ThemeResource LayerFillColorDefaultBrush}"
             BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
             BorderThickness="0,0,0,1">
             <Grid
-                MaxWidth="720"
-                HorizontalAlignment="Center"
+                HorizontalAlignment="Stretch"
                 ColumnSpacing="16">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
@@ -58,13 +57,39 @@
             </Grid>
         </Border>
 
-        <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Disabled">
-            <StackPanel
-                MaxWidth="720"
-                HorizontalAlignment="Center"
-                Padding="28,20,28,28"
-                Spacing="12">
-                <Expander Header="点击特效" IsExpanded="True">
+        <NavigationView
+            x:Name="SettingsNavigation"
+            Grid.Row="1"
+            IsBackButtonVisible="Collapsed"
+            IsPaneOpen="True"
+            IsPaneToggleButtonVisible="False"
+            IsSettingsVisible="False"
+            OpenPaneLength="220"
+            PaneDisplayMode="Left"
+            SelectionChanged="SettingsNavigation_SelectionChanged">
+            <NavigationView.MenuItems>
+                <NavigationViewItem Content="点击特效" Tag="ClickEffects" />
+                <NavigationViewItem Content="悬挂绳子与图标" Tag="Rope" />
+                <NavigationViewItem Content="光标拖尾" Tag="Trail" />
+                <NavigationViewItem Content="星云环绕" Tag="Orbit" />
+                <NavigationViewItem Content="光标光晕" Tag="Glow" />
+                <NavigationViewItem Content="常规与关于" Tag="General" />
+            </NavigationView.MenuItems>
+            <NavigationView.Content>
+                <ScrollViewer
+                    HorizontalContentAlignment="Stretch"
+                    HorizontalScrollBarVisibility="Disabled"
+                    VerticalScrollBarVisibility="Auto">
+                    <StackPanel
+                        HorizontalAlignment="Stretch"
+                        Padding="28,24,32,36"
+                        Spacing="14">
+                <Expander
+                    x:Name="ClickEffectsSection"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Stretch"
+                    Header="点击特效"
+                    IsExpanded="True">
                     <StackPanel Padding="0,12,0,4" Spacing="12">
                         <ToggleSwitch
                             x:Name="EnableClickEffectsToggle"
@@ -125,7 +150,12 @@
                     </StackPanel>
                 </Expander>
 
-                <Expander Header="悬挂绳子与图标" IsExpanded="True">
+                <Expander
+                    x:Name="RopeSection"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Stretch"
+                    Header="悬挂绳子与图标"
+                    IsExpanded="True">
                     <StackPanel Padding="0,12,0,4" Spacing="12">
                         <ToggleSwitch
                             x:Name="EnableRopeToggle"
@@ -257,7 +287,12 @@
                     </StackPanel>
                 </Expander>
 
-                <Expander Header="光标拖尾">
+                <Expander
+                    x:Name="TrailSection"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Stretch"
+                    Header="光标拖尾"
+                    IsExpanded="True">
                     <StackPanel Padding="0,12,0,4" Spacing="12">
                         <ToggleSwitch
                             x:Name="EnableTrailToggle"
@@ -302,23 +337,32 @@
                     </StackPanel>
                 </Expander>
 
-                <Expander Header="环绕粒子">
+                <Expander
+                    x:Name="OrbitSection"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Stretch"
+                    Header="星云环绕"
+                    IsExpanded="True">
                     <StackPanel Padding="0,12,0,4" Spacing="12">
+                        <TextBlock
+                            Opacity="0.68"
+                            Text="炫彩星尘、彗星尾迹与多层光雾以不同轨道围绕光标流动。"
+                            TextWrapping="Wrap" />
                         <ToggleSwitch
                             x:Name="EnableOrbitToggle"
-                            Header="启用环绕粒子"
+                            Header="启用星云环绕"
                             Toggled="SettingChanged" />
                         <Slider
                             x:Name="OrbitCountSlider"
-                            Header="粒子数量"
-                            Maximum="60"
-                            Minimum="1"
+                            Header="星尘密度"
+                            Maximum="120"
+                            Minimum="12"
                             StepFrequency="1"
                             ValueChanged="SettingChanged" />
                         <Slider
                             x:Name="OrbitRadiusSlider"
-                            Header="环绕半径"
-                            Maximum="200"
+                            Header="星云范围"
+                            Maximum="260"
                             Minimum="10"
                             StepFrequency="1"
                             ValueChanged="SettingChanged" />
@@ -331,10 +375,10 @@
                             ValueChanged="SettingChanged" />
                         <Slider
                             x:Name="OrbitSizeSlider"
-                            Header="粒子大小"
-                            Maximum="40"
-                            Minimum="2"
-                            StepFrequency="1"
+                            Header="发光粒子大小"
+                            Maximum="12"
+                            Minimum="0.5"
+                            StepFrequency="0.25"
                             ValueChanged="SettingChanged" />
                         <Grid ColumnSpacing="10">
                             <Grid.ColumnDefinitions>
@@ -343,7 +387,7 @@
                             </Grid.ColumnDefinitions>
                             <TextBox
                                 x:Name="OrbitColorText"
-                                Header="粒子颜色（#AARRGGBB）"
+                                Header="星云主色调（自动混合多种颜色）"
                                 LostFocus="SettingChanged" />
                             <Button Grid.Column="1" VerticalAlignment="Bottom" Content="选择颜色">
                                 <Button.Flyout>
@@ -361,7 +405,12 @@
                     </StackPanel>
                 </Expander>
 
-                <Expander Header="光标光晕">
+                <Expander
+                    x:Name="GlowSection"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Stretch"
+                    Header="光标光晕"
+                    IsExpanded="True">
                     <StackPanel Padding="0,12,0,4" Spacing="12">
                         <ToggleSwitch
                             x:Name="EnableGlowToggle"
@@ -406,24 +455,47 @@
                     </StackPanel>
                 </Expander>
 
-                <Expander Header="常规与关于">
+                <Expander
+                    x:Name="GeneralSection"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Stretch"
+                    Header="常规与关于"
+                    IsExpanded="True">
                     <StackPanel Padding="0,12,0,4" Spacing="12">
                         <ToggleSwitch
                             x:Name="StartWithWindowsToggle"
                             Header="开机自启"
                             Toggled="SettingChanged" />
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <Button Click="ResetButton_Click" Content="恢复默认设置" />
-                            <Button Click="CopyVersionButton_Click" Content="复制版本号" />
-                            <Button Click="OpenRepositoryButton_Click" Content="打开项目仓库" />
-                        </StackPanel>
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Button
+                                HorizontalAlignment="Stretch"
+                                Click="ResetButton_Click"
+                                Content="恢复默认设置" />
+                            <Button
+                                Grid.Column="1"
+                                HorizontalAlignment="Stretch"
+                                Click="CopyVersionButton_Click"
+                                Content="复制版本号" />
+                            <Button
+                                Grid.Column="2"
+                                HorizontalAlignment="Stretch"
+                                Click="OpenRepositoryButton_Click"
+                                Content="打开项目仓库" />
+                        </Grid>
                         <TextBlock x:Name="ProductText" FontWeight="SemiBold" />
                         <TextBlock x:Name="VersionText" />
                         <TextBlock x:Name="AuthorText" />
                         <TextBlock x:Name="CopyrightText" TextWrapping="Wrap" />
                     </StackPanel>
                 </Expander>
-            </StackPanel>
-        </ScrollViewer>
+                    </StackPanel>
+                </ScrollViewer>
+            </NavigationView.Content>
+        </NavigationView>
     </Grid>
 </Window>

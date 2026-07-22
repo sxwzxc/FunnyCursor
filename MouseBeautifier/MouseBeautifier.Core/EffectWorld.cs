@@ -16,13 +16,15 @@ namespace MouseBeautifier.Core
             TrailSimulation trail,
             RopeSimulator rope,
             double animationTime,
-            float orbitAngleDegrees,
+            double orbitAnimationTime,
+            double orbitAngleDegrees,
             Vector2 cursor)
         {
             Particles = particles;
             Trail = trail;
             Rope = rope;
             AnimationTime = animationTime;
+            OrbitAnimationTime = orbitAnimationTime;
             OrbitAngleDegrees = orbitAngleDegrees;
             Cursor = cursor;
         }
@@ -31,7 +33,8 @@ namespace MouseBeautifier.Core
         public TrailSimulation Trail { get; }
         public RopeSimulator Rope { get; }
         public double AnimationTime { get; }
-        public float OrbitAngleDegrees { get; }
+        public double OrbitAnimationTime { get; }
+        public double OrbitAngleDegrees { get; }
         public Vector2 Cursor { get; }
     }
 
@@ -84,7 +87,9 @@ namespace MouseBeautifier.Core
 
         public double AnimationTime { get; private set; }
 
-        public float OrbitAngleDegrees { get; private set; }
+        public double OrbitAnimationTime { get; private set; }
+
+        public double OrbitAngleDegrees { get; private set; }
 
         public double InterpolationAlpha => _clock.InterpolationAlpha;
 
@@ -148,6 +153,7 @@ namespace MouseBeautifier.Core
                 Trail,
                 Rope,
                 AnimationTime,
+                OrbitAnimationTime,
                 OrbitAngleDegrees,
                 cursor);
         }
@@ -160,6 +166,7 @@ namespace MouseBeautifier.Core
             Particles.Clear();
             Trail.Clear();
             AnimationTime = 0;
+            OrbitAnimationTime = 0;
             OrbitAngleDegrees = 0;
             _ropeWasEnabled = false;
         }
@@ -172,14 +179,15 @@ namespace MouseBeautifier.Core
             AnimationTime += deltaSeconds;
             if (settings.EnableOrbit)
             {
+                OrbitAnimationTime += deltaSeconds;
                 double orbitSpeed =
                     double.IsFinite(settings.OrbitSpeed)
                         ? settings.OrbitSpeed
                         : 0;
-                OrbitAngleDegrees = (
-                    OrbitAngleDegrees +
-                    (float)(orbitSpeed * deltaSeconds)) %
-                    360;
+                // Keep an unwrapped double-precision phase. Wrapping this
+                // shared angle before applying each star's speed multiplier
+                // causes non-integer-speed particles to jump every 360°.
+                OrbitAngleDegrees += orbitSpeed * deltaSeconds;
             }
 
             if (settings.EnableClickEffects &&

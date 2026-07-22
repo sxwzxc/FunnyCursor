@@ -15,7 +15,14 @@ namespace MouseBeautifier
 {
     public sealed partial class SettingsWindow : Window
     {
+        private const int MinimumWindowWidthDips = 760;
+        private const int MinimumWindowHeightDips = 620;
+        private const int InitialWindowWidthDips = 980;
+        private const int InitialWindowHeightDips = 820;
         private readonly ISettingsService _settingsService;
+        private AppWindow? _appWindow;
+        private IntPtr _windowHandle;
+        private bool _enforcingMinimumSize;
         private bool _loading = true;
 
         public event Action? ExitRequested;
@@ -25,7 +32,10 @@ namespace MouseBeautifier
             _settingsService = settingsService ??
                 throw new ArgumentNullException(nameof(settingsService));
             InitializeComponent();
+            SettingsNavigation.SelectedItem = SettingsNavigation.MenuItems[0];
+            ShowSettingsSection("ClickEffects");
             ConfigureWindow();
+            Closed += SettingsWindow_Closed;
             LoadSettings();
             _loading = false;
         }
@@ -34,16 +44,87 @@ namespace MouseBeautifier
         {
             try
             {
-                IntPtr hwnd = WindowNative.GetWindowHandle(this);
-                var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd);
-                AppWindow appWindow = AppWindow.GetFromWindowId(windowId);
-                appWindow.Resize(new SizeInt32(860, 760));
-                appWindow.SetIcon("Assets\\funnycursor.ico");
+                _windowHandle = WindowNative.GetWindowHandle(this);
+                var windowId =
+                    Microsoft.UI.Win32Interop.GetWindowIdFromWindow(
+                        _windowHandle);
+                _appWindow = AppWindow.GetFromWindowId(windowId);
+                uint dpi = GetWindowDpi();
+                _appWindow.Resize(new SizeInt32(
+                    DipsToPixels(InitialWindowWidthDips, dpi),
+                    DipsToPixels(InitialWindowHeightDips, dpi)));
+                _appWindow.SetIcon("Assets\\funnycursor.ico");
+                _appWindow.Changed += AppWindow_Changed;
             }
             catch (Exception ex)
             {
                 App.Log("SettingsWindow.ConfigureWindow: " + ex.Message);
             }
+        }
+
+        private void AppWindow_Changed(
+            AppWindow sender,
+            AppWindowChangedEventArgs args)
+        {
+            if (!args.DidSizeChange || _enforcingMinimumSize)
+            {
+                return;
+            }
+
+            SizeInt32 current = sender.Size;
+            uint dpi = GetWindowDpi();
+            int minimumWidth =
+                DipsToPixels(MinimumWindowWidthDips, dpi);
+            int minimumHeight =
+                DipsToPixels(MinimumWindowHeightDips, dpi);
+            int width = Math.Max(current.Width, minimumWidth);
+            int height = Math.Max(current.Height, minimumHeight);
+            if (width == current.Width && height == current.Height)
+            {
+                return;
+            }
+
+            try
+            {
+                _enforcingMinimumSize = true;
+                sender.Resize(new SizeInt32(width, height));
+            }
+            finally
+            {
+                _enforcingMinimumSize = false;
+            }
+        }
+
+        private uint GetWindowDpi()
+        {
+            if (_windowHandle == IntPtr.Zero)
+            {
+                return 96;
+            }
+
+            uint dpi = NativeMethods.GetDpiForWindow(_windowHandle);
+            return dpi == 0 ? 96u : dpi;
+        }
+
+        private static int DipsToPixels(int dips, uint dpi)
+        {
+            return Math.Max(
+                1,
+                (int)Math.Round(dips * dpi / 96d));
+        }
+
+        private void SettingsWindow_Closed(
+            object sender,
+            WindowEventArgs args)
+        {
+            Closed -= SettingsWindow_Closed;
+            if (_appWindow != null)
+            {
+                _appWindow.Changed -= AppWindow_Changed;
+                _appWindow = null;
+            }
+
+            _windowHandle = IntPtr.Zero;
         }
 
         private void LoadSettings()
@@ -142,6 +223,30 @@ namespace MouseBeautifier
         private static string ToHex(Color color)
         {
             return $"#{color.A:X2}{color.R:X2}{color.G:X2}{color.B:X2}";
+        }
+
+        private void SettingsNavigation_SelectionChanged(
+            NavigationView sender,
+            NavigationViewSelectionChangedEventArgs args)
+        {
+            string? section = (args.SelectedItem as NavigationViewItem)?.Tag?.ToString();
+            ShowSettingsSection(section);
+        }
+
+        private void ShowSettingsSection(string? section)
+        {
+            ClickEffectsSection.Visibility =
+                section == "ClickEffects" ? Visibility.Visible : Visibility.Collapsed;
+            RopeSection.Visibility =
+                section == "Rope" ? Visibility.Visible : Visibility.Collapsed;
+            TrailSection.Visibility =
+                section == "Trail" ? Visibility.Visible : Visibility.Collapsed;
+            OrbitSection.Visibility =
+                section == "Orbit" ? Visibility.Visible : Visibility.Collapsed;
+            GlowSection.Visibility =
+                section == "Glow" ? Visibility.Visible : Visibility.Collapsed;
+            GeneralSection.Visibility =
+                section == "General" ? Visibility.Visible : Visibility.Collapsed;
         }
 
         private void CommitSettings()

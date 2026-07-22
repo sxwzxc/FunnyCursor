@@ -68,12 +68,30 @@ namespace MouseBeautifier
         {
             float freshness = 1 -
                 Math.Clamp(age / maximumAge, 0, 1);
-            Color color = baseColor;
-            color.A = (byte)(freshness * 230);
+            // Smoothstep avoids a harsh linear cutoff at the tail.
+            freshness = freshness * freshness * (3 - 2 * freshness);
+
+            Color aura = baseColor;
+            aura.A = (byte)(
+                baseColor.A / 255f *
+                freshness *
+                58);
             session.DrawLine(
                 from,
                 to,
-                color,
+                aura,
+                Math.Max(1.5f, baseWidth * freshness * 2.6f),
+                stroke);
+
+            Color core = baseColor;
+            core.A = (byte)(
+                baseColor.A / 255f *
+                freshness *
+                235);
+            session.DrawLine(
+                from,
+                to,
+                core,
                 Math.Max(0.5f, baseWidth * freshness),
                 stroke);
         }
