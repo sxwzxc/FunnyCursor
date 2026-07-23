@@ -163,8 +163,11 @@ public sealed class EffectWorldTests
         {
             EnableClickEffects = false,
             EnableTrail = false,
-            EnableOrbit = true,
             EnableRope = true,
+            Nebula = new NebulaSettings
+            {
+                Enabled = true,
+            },
         };
         EffectWorld sixtyHertz = new(randomSeed: 42);
         EffectWorld oneFortyFourHertz = new(randomSeed: 42);
@@ -210,8 +213,11 @@ public sealed class EffectWorldTests
             EnableClickEffects = false,
             EnableTrail = false,
             EnableRope = false,
-            EnableOrbit = true,
-            OrbitSpeed = 180,
+            Nebula = new NebulaSettings
+            {
+                Enabled = true,
+                AngularSpeed = 180,
+            },
         };
         EffectWorld world = new(randomSeed: 42);
 
@@ -235,8 +241,11 @@ public sealed class EffectWorldTests
             EnableClickEffects = false,
             EnableTrail = false,
             EnableRope = false,
-            EnableOrbit = true,
-            OrbitSpeed = 45,
+            Nebula = new NebulaSettings
+            {
+                Enabled = true,
+                AngularSpeed = 45,
+            },
         };
         EffectWorld world = new(randomSeed: 42);
         world.AdvanceFrame(
@@ -247,7 +256,7 @@ public sealed class EffectWorldTests
         double angle = world.OrbitAngleDegrees;
         double animationTime = world.OrbitAnimationTime;
 
-        settings.EnableOrbit = false;
+        settings.Nebula.Enabled = false;
         for (int frame = 0; frame < 120; frame++)
         {
             world.AdvanceFrame(

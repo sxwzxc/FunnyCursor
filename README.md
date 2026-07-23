@@ -22,10 +22,10 @@
 3. **光标拖尾**
    - 记录光标轨迹，按存活时间淡出，可调节颜色、长度、宽度。
 
-4. **环绕粒子**
-   - 在光标周围生成一圈粒子，以可调速度持续旋转（顺时针 / 逆时针）。
-   - 粒子带透明度与大小渐变，配合淡环描边，呈现彗星拖尾般的扫光效果。
-   - 可调节启用、粒子数量、环绕半径、旋转速度（度/秒，支持负向反向）、粒子大小、颜色。
+4. **星云环绕**
+   - 星尘、云雾、彗星尾迹与星尘光晕围绕光标旋转（支持正反向）。
+   - 每颗星尘为三层同心结构：中心点 → 描边（可设颜色/宽度/不透明度）→ 最外层柔和光晕。
+   - 颜色统一使用 RGB；云雾、尾迹、星尘本体、描边、星尘光晕分别提供明确的不透明度，描边有独立宽度、光晕有独立大小控制。
 
 5. **光标光晕**
    - 在光标处绘制径向渐变光晕，可调节颜色、半径、强度。
@@ -43,7 +43,7 @@
 | 项目 | 说明 |
 | --- | --- |
 | UI 框架 | WinUI 3（`Microsoft.WindowsAppSDK` 1.6.250602001） |
-| 渲染 | Win2D（`Microsoft.Graphics.Win2D` 1.3.2，`CanvasControl`） |
+| 渲染 | Win2D（`Microsoft.Graphics.Win2D` 1.3.2，每显示器 `CanvasRenderTarget`） |
 | 运行时 | .NET 10（`net10.0-windows10.0.19041.0`） |
 | 分发 | 自包含非打包（`WindowsPackageType=None`、`WindowsAppSDKSelfContained=true`） |
 | 模拟 | 无 UI 依赖的 `FunnyCursor.Core`；120 Hz 固定步长，Verlet 绳子、粒子、拖尾与时间戳输入队列 |
@@ -55,9 +55,10 @@
 - `MouseBeautifier` 是 WinUI 3 外壳：`App.xaml` 提供应用资源，`SettingsWindow.xaml` 定义设置窗口，代码隐藏负责设置绑定、文件选择和生命周期。
 - `FunnyCursor.Core` 不依赖 WinUI / Win2D，集中管理设置模型、固定步长时钟、时间戳输入、粒子、拖尾、绳子和挂件几何，可在无桌面的测试进程中验证。
 - `OverlayHost` 只创建一个 `EffectWorld`。每帧先消费鼠标输入并推进一次模拟，再把同一个只读快照投影到每台物理显示器，避免多屏分别推进导致速度翻倍或状态分叉。
+- 星云的确定性几何位于无 UI 依赖的 `NebulaLayout`，Win2D 分层绘制位于 `NebulaRenderer`；设置先归一化为不可变 `NebulaRenderSettings`，同一帧的所有显示器共享同一份参数快照。
 - 每台显示器拥有独立的 `CanvasRenderTarget`、DIB 和分层窗口。Win2D 输出读回 32 位预乘 BGRA，之后通过 `UpdateLayeredWindow` 提交；窗口保持置顶、无激活且点击穿透。
 - 显示器增删、分辨率变化、`WM_DPICHANGED` 和 Win2D 设备丢失均会触发表面或设备资源重建。原生 DC、GDI 对象、鼠标钩子、菜单和图标由 `SafeHandle` 包装。
-- 设置由 `ISettingsService` 隔离，当前实现写入 `%LOCALAPPDATA%\FunnyCursor\settings.json`，并按需更新当前用户的开机启动注册表项。
+- 设置由 `ISettingsService` 隔离，当前实现以 schema v2 写入 `%LOCALAPPDATA%\FunnyCursor\settings.json`；旧版扁平环绕字段会在加载时自动迁移，滑块修改即时预览并在停止操作 250 ms 后原子持久化。
 
 ## 编译
 
@@ -95,7 +96,7 @@ Release x64 成功构建后，主输出目录应至少包含：
 
 ## 自动化测试
 
-测试项目为 `MouseBeautifier.Core.Tests`，当前包含 26 个 xUnit 测试，覆盖：
+测试项目为 `MouseBeautifier.Core.Tests`，当前包含 39 个 xUnit 测试，覆盖：
 
 - 固定步长在 60 / 144 Hz 呈现频率下的一致性与卡顿追帧上限。
 - 时间戳输入的容量、顺序、消费门限及清空后的新时间纪元。
@@ -103,6 +104,7 @@ Release x64 成功构建后，主输出目录应至少包含：
 - 绳子静止、瞬移、剧烈抖动、运行中几何参数变化时的有限值与长度约束。
 - 挂件连接点、方向、非法输入回退和 `R * T` 变换顺序。
 - 负坐标、多显示器混合 DPI 往返映射及单一共享模拟快照。
+- 星云参数范围、RGB/不透明度契约、旧 JSON 迁移、布局确定性、零速尾迹与反向旋转。
 - 2,000 帧高复杂度无头模拟的宽松耗时与托管分配预算，用于捕获每帧闭包分配等明显性能回归；它不是硬件渲染基准。
 
 ## 运行
@@ -130,7 +132,7 @@ Release x64 成功构建后，主输出目录应至少包含：
 | 点击特效 | 启用 / 预设 / 颜色 / 粒子数 / 速度 / 重力 | 控制点击动画 |
 | 绳子 | 启用 / 长度 / 节数 / 重力 / 阻尼 / 刚度 / 图标类型（含内置图片选项） / 大小 / 颜色 / 绳子颜色 / 粗细 / 自定义路径 | 控制悬挂物理 |
 | 拖尾 | 启用 / 颜色 / 长度 / 宽度 | 控制光标轨迹 |
-| 环绕粒子 | 启用 / 数量 / 半径 / 速度 / 大小 / 颜色 | 控制光标周围旋转粒子环 |
+| 星云环绕 | 启用 / 数量 / 范围 / 速度 / 星尘大小 / 星尘颜色 / 云雾颜色 / 描边颜色+宽度 / 光晕颜色+大小 / 各层不透明度 | 中心点→描边→光晕 三层结构；云雾拥有独立颜色，可与星尘不同 |
 | 光晕 | 启用 / 颜色 / 半径 / 强度 | 控制光标光晕 |
 | 常规 | 开机自启 | 写入注册表自启 |
 
@@ -143,13 +145,15 @@ MouseBeautifier/
 ├── App.xaml / App.xaml.cs                  # WinUI 应用资源、单实例与生命周期
 ├── SettingsWindow.xaml / .xaml.cs          # Mica 设置窗口及代码隐藏
 ├── OverlayHost.cs                          # 每显示器分层窗口、共享模拟时钟与设备恢复
-├── EffectRenderer.cs                       # Win2D 视觉投影
+├── EffectRenderer.cs / NebulaRenderer.cs   # Win2D 视觉投影与星云分层绘制
 ├── IconResourceManager.cs / IconImage.cs   # PNG/SVG/GIF 等图标资源
 ├── MouseTracker.cs / TrayIcon.cs           # 全局输入、托盘与退出快捷键
 ├── JsonSettingsService.cs                  # JSON 设置与开机启动注册
 ├── NativeMethods.cs / NativeHandles.cs     # P/Invoke 与原生资源安全句柄
 ├── MouseBeautifier.Core/
 │   ├── EffectWorld.cs                      # 单一模拟世界与共享帧快照
+│   ├── NebulaSettings.cs / NebulaLayout.cs # 星云参数契约、不可变快照与纯几何
+│   ├── AppSettingsJson.cs                  # schema v2 序列化与旧设置迁移
 │   ├── FixedStepClock.cs                   # 120 Hz 固定步长
 │   ├── TimestampedInputQueue.cs             # 有界线程安全输入
 │   ├── RopeSimulator.cs                    # Verlet 绳子物理
@@ -169,7 +173,7 @@ MouseBeautifier/
 - 混合 DPI 坐标数学已有无头测试，但显示器热插拔、主屏切换、旋转、不同缩放比例与负坐标布局仍需在真实硬件上验证。
 - 自动化测试不创建 WinUI 窗口，也不验证托盘、全局鼠标钩子、点击穿透、Mica、颜色 / 文件选择器、GIF 实际播放或设备丢失后的视觉恢复。
 - 自定义图标使用 Win2D `CanvasBitmap` / `CanvasSVGDocument` 解码，复杂 SVG 可能无法完美渲染。
-- 设置滑块会即时持久化；快速连续拖动时可能产生较多磁盘写入。
+- 星云光晕和云雾的“不透明度”是径向渐变中心的峰值，边缘仍会按发光效果自然衰减到透明。
 
 ## 绳子物理与稳定性
 

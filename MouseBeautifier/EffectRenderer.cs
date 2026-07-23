@@ -16,52 +16,12 @@ namespace MouseBeautifier
     /// </summary>
     public sealed class EffectRenderer : IDisposable
     {
-        private static readonly Color[] NebulaPalette =
-        {
-            Color.FromArgb(255, 92, 232, 255),
-            Color.FromArgb(255, 82, 139, 255),
-            Color.FromArgb(255, 151, 102, 255),
-            Color.FromArgb(255, 246, 91, 225),
-            Color.FromArgb(255, 255, 92, 145),
-            Color.FromArgb(255, 255, 205, 102),
-            Color.FromArgb(255, 104, 255, 205),
-            Color.FromArgb(255, 202, 238, 255),
-        };
-
-        private readonly struct NebulaVisual
-        {
-            public NebulaVisual(
-                Vector2 position,
-                Vector2 tangent,
-                Color color,
-                float radius,
-                float opacity,
-                float trailLength,
-                float rayStrength)
-            {
-                Position = position;
-                Tangent = tangent;
-                Color = color;
-                Radius = radius;
-                Opacity = opacity;
-                TrailLength = trailLength;
-                RayStrength = rayStrength;
-            }
-
-            public Vector2 Position { get; }
-            public Vector2 Tangent { get; }
-            public Color Color { get; }
-            public float Radius { get; }
-            public float Opacity { get; }
-            public float TrailLength { get; }
-            public float RayStrength { get; }
-        }
-
         private readonly ISettingsService _settingsService;
         private readonly ParticleRenderer _particles = new();
         private readonly TrailRenderer _trail = new();
         private readonly IconResourceManager _icons;
         private bool _settingsHooked;
+        private string _loadedCustomIconPath = "";
 
         public EffectRenderer(
             ICanvasResourceCreator creator,
@@ -81,14 +41,25 @@ namespace MouseBeautifier
         public async Task InitializeResourcesAsync()
         {
             await _icons.InitializeAsync(AppContext.BaseDirectory);
-            await _icons.ReloadCustomAsync(
-                _settingsService.Current.CustomIconPath);
+            _loadedCustomIconPath =
+                _settingsService.Current.CustomIconPath ?? "";
+            await _icons.ReloadCustomAsync(_loadedCustomIconPath);
         }
 
         private void OnSettingsChanged(object? sender, EventArgs e)
         {
-            _ = _icons.ReloadCustomAsync(
-                _settingsService.Current.CustomIconPath);
+            string path =
+                _settingsService.Current.CustomIconPath ?? "";
+            if (string.Equals(
+                    path,
+                    _loadedCustomIconPath,
+                    StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _loadedCustomIconPath = path;
+            _ = _icons.ReloadCustomAsync(path);
         }
 
         /// <summary>Returns the loaded icon for image-based types (custom / pig / girl), or null for vector shapes.</summary>
@@ -99,7 +70,8 @@ namespace MouseBeautifier
 
         public void Render(
             CanvasDrawingSession session,
-            in EffectFrameSnapshot frame)
+            in EffectFrameSnapshot frame,
+            in NebulaRenderSettings nebula)
         {
             var s = _settingsService.Current;
             Vector2 cursor = frame.Cursor;
@@ -112,11 +84,11 @@ namespace MouseBeautifier
                     frame.Trail,
                     ColorsUtil.Parse(s.TrailColor),
                     (float)s.TrailWidth);
-            if (s.EnableOrbit)
-                DrawOrbit(
+            if (nebula.Enabled)
+                NebulaRenderer.Render(
                     session,
                     cursor,
-                    s,
+                    nebula,
                     frame.OrbitAngleDegrees,
                     frame.OrbitAnimationTime);
             if (s.EnableRope) DrawRope(session, s, frame);
@@ -159,316 +131,6 @@ namespace MouseBeautifier
             session.FillCircle(c, outerRadius * 0.42f, coreBrush);
         }
 
-        // ---------- Nebula orbit (星云环绕) ----------
-        private static void DrawOrbit(
-            CanvasDrawingSession session,
-            Vector2 c,
-            AppSettings s,
-            double orbitAngleDegrees,
-            double animationTime)
-        {
-            int count = Math.Clamp(s.OrbitCount, 1, 120);
-            float configuredRadius = (float)s.OrbitRadius;
-            float radius = float.IsFinite(configuredRadius)
-                ? Math.Clamp(configuredRadius, 4, 260)
-                : 88;
-            float configuredSize = (float)s.OrbitSize;
-            float particleSize = float.IsFinite(configuredSize)
-                ? Math.Clamp(configuredSize, 0.5f, 12)
-                : 2.8f;
-            float configuredStrokeWidth = (float)s.OrbitStrokeWidth;
-            float strokeWidth = float.IsFinite(configuredStrokeWidth)
-                ? Math.Clamp(configuredStrokeWidth, 0, 8)
-                : 0.8f;
-            Color tint = ColorsUtil.Parse(s.OrbitColor);
-            float time = (float)animationTime;
-            const float tau = MathF.PI * 2;
-            const float diskTilt = 0.22f;
-            float tiltCos = MathF.Cos(diskTilt);
-            float tiltSin = MathF.Sin(diskTilt);
-            Span<NebulaVisual> visuals =
-                stackalloc NebulaVisual[count];
-
-            for (int i = 0; i < count; i++)
-            {
-                float radialSeed = Hash01(i * 7 + 1);
-                float phaseSeed = Hash01(i * 7 + 2);
-                float sizeSeed = Hash01(i * 7 + 3);
-                float colorSeed = Hash01(i * 7 + 4);
-                float speedSeed = Hash01(i * 7 + 5);
-                float glowSeed = Hash01(i * 7 + 6);
-                float raySeed = Hash01(i * 7 + 7);
-
-                // A mixed core/disk distribution creates a bright nucleus and
-                // a broad stellar disk instead of a hollow ring.
-                float radial = radialSeed < 0.24f
-                    ? 0.10f + 0.34f * MathF.Pow(
-                        radialSeed / 0.24f,
-                        1.35f)
-                    : 0.36f + 0.66f * MathF.Sqrt(
-                        (radialSeed - 0.24f) / 0.76f);
-                float orbitRadius = radius * radial;
-                int arm = i % 4;
-                float phase =
-                    arm * tau / 4f +
-                    radial * 2.8f +
-                    (phaseSeed - 0.5f) * 0.95f;
-                float speed =
-                    0.24f +
-                    (1.05f - radial) * 1.18f +
-                    (speedSeed - 0.5f) * 0.20f;
-                float orbitalRotation = (float)(
-                    Math.IEEERemainder(
-                        orbitAngleDegrees * speed,
-                        360) *
-                    Math.PI / 180);
-                float angle =
-                    phase +
-                    orbitalRotation +
-                    MathF.Sin(
-                        time * (0.28f + speedSeed * 0.42f) +
-                        phase) * 0.13f;
-                float breathing =
-                    1f +
-                    MathF.Sin(time * 0.55f + phase) *
-                    (0.025f + speedSeed * 0.035f);
-                float ellipse = 0.56f + colorSeed * 0.22f;
-                float localX =
-                    MathF.Cos(angle) * orbitRadius * breathing;
-                float localY =
-                    MathF.Sin(angle) * orbitRadius *
-                    breathing * ellipse;
-                Vector2 position = c + new Vector2(
-                    localX * tiltCos - localY * tiltSin,
-                    localX * tiltSin + localY * tiltCos);
-                position += new Vector2(
-                    MathF.Sin(time * 0.31f + phaseSeed * tau),
-                    MathF.Cos(time * 0.27f + colorSeed * tau)) *
-                    radius * (0.008f + speedSeed * 0.018f);
-
-                Vector2 localTangent = new(
-                    -MathF.Sin(angle),
-                    MathF.Cos(angle) * ellipse);
-                Vector2 tangent = Vector2.Normalize(new Vector2(
-                    localTangent.X * tiltCos -
-                        localTangent.Y * tiltSin,
-                    localTangent.X * tiltSin +
-                        localTangent.Y * tiltCos));
-
-                float twinkle =
-                    0.64f +
-                    0.36f *
-                    (0.5f + 0.5f * MathF.Sin(
-                        time * (1.2f + speedSeed * 4.1f) +
-                        phaseSeed * tau));
-                float radiusFactor =
-                    0.16f +
-                    1.34f *
-                    MathF.Pow(sizeSeed, 2.55f);
-                float dotRadius =
-                    particleSize * radiusFactor * twinkle;
-                float opacity =
-                    (0.28f + (1.05f - radial) * 0.62f) *
-                    (0.68f + twinkle * 0.32f);
-
-                float colorPhase =
-                    colorSeed +
-                    arm * 0.11f +
-                    radial * 0.16f +
-                    time * (0.004f + speedSeed * 0.007f);
-                Color particleColor =
-                    PaletteColor(colorPhase, tint);
-                float trailLength =
-                    dotRadius *
-                    (1.8f + speed * 2.6f) *
-                    (0.35f + glowSeed * 0.9f);
-                float rayStrength =
-                    raySeed > 0.82f
-                        ? (raySeed - 0.82f) / 0.18f
-                        : 0;
-                visuals[i] = new NebulaVisual(
-                    position,
-                    tangent,
-                    particleColor,
-                    dotRadius,
-                    opacity,
-                    trailLength,
-                    rayStrength);
-            }
-
-            CanvasBlend savedBlend = session.Blend;
-            using var trailStroke = new CanvasStrokeStyle
-            {
-                StartCap = CanvasCapStyle.Round,
-                EndCap = CanvasCapStyle.Round,
-            };
-            try
-            {
-                // Additive blending is the key difference between opaque dots
-                // and luminous energy: overlapping colors bloom naturally.
-                session.Blend = CanvasBlend.Add;
-
-                float cloudPulse =
-                    1f + MathF.Sin(time * 0.42f) * 0.045f;
-                DrawNebulaCloud(
-                    session,
-                    c + new Vector2(-radius * 0.13f, radius * 0.02f),
-                    radius * 1.10f * cloudPulse,
-                    radius * 0.68f * cloudPulse,
-                    WithOpacity(
-                        PaletteColor(0.12f + time * 0.003f, tint),
-                        0.12f));
-                DrawNebulaCloud(
-                    session,
-                    c + new Vector2(radius * 0.17f, -radius * 0.08f),
-                    radius * 0.86f / cloudPulse,
-                    radius * 0.54f / cloudPulse,
-                    WithOpacity(
-                        PaletteColor(0.42f + time * 0.002f, tint),
-                        0.11f));
-                DrawNebulaCloud(
-                    session,
-                    c + new Vector2(0, radius * 0.08f),
-                    radius * 0.58f,
-                    radius * 0.40f,
-                    WithOpacity(
-                        PaletteColor(0.72f - time * 0.0025f, tint),
-                        0.13f));
-
-                // Pass 1: comet trails and broad bokeh halos.
-                foreach (NebulaVisual visual in visuals)
-                {
-                    Vector2 trailStart =
-                        visual.Position -
-                        visual.Tangent * visual.TrailLength;
-                    session.DrawLine(
-                        trailStart,
-                        visual.Position,
-                        WithOpacity(
-                            visual.Color,
-                            visual.Opacity * 0.19f),
-                        Math.Max(0.65f, visual.Radius * 0.62f),
-                        trailStroke);
-                    session.FillCircle(
-                        visual.Position,
-                        visual.Radius * 5.2f,
-                        WithOpacity(
-                            visual.Color,
-                            visual.Opacity * 0.035f));
-                    session.FillCircle(
-                        visual.Position,
-                        visual.Radius * 2.7f,
-                        WithOpacity(
-                            visual.Color,
-                            visual.Opacity * 0.12f));
-                }
-
-                // Pass 2: saturated bodies, white-hot cores and diffraction
-                // spikes. Separating passes makes the cloud feel layered.
-                foreach (NebulaVisual visual in visuals)
-                {
-                    session.FillCircle(
-                        visual.Position,
-                        visual.Radius,
-                        WithOpacity(
-                            visual.Color,
-                            visual.Opacity * 0.92f));
-
-                    if (strokeWidth > 0)
-                    {
-                        session.DrawCircle(
-                            visual.Position,
-                            visual.Radius + strokeWidth * 0.5f,
-                            WithOpacity(
-                                visual.Color,
-                                visual.Opacity * 0.86f),
-                            strokeWidth);
-                    }
-
-                    Color hotCore = Blend(
-                        visual.Color,
-                        Color.FromArgb(255, 255, 255, 255),
-                        0.58f);
-                    session.FillCircle(
-                        visual.Position,
-                        Math.Max(0.42f, visual.Radius * 0.34f),
-                        WithOpacity(
-                            hotCore,
-                            visual.Opacity * 0.95f));
-
-                    if (visual.RayStrength > 0)
-                    {
-                        float ray =
-                            visual.Radius *
-                            (2.4f + visual.RayStrength * 3.8f);
-                        Vector2 normal = new(
-                            -visual.Tangent.Y,
-                            visual.Tangent.X);
-                        Color rayColor = WithOpacity(
-                            hotCore,
-                            visual.Opacity *
-                                (0.22f +
-                                visual.RayStrength * 0.32f));
-                        session.DrawLine(
-                            visual.Position -
-                                visual.Tangent * ray,
-                            visual.Position +
-                                visual.Tangent * ray,
-                            rayColor,
-                            0.72f);
-                        session.DrawLine(
-                            visual.Position -
-                                normal * ray * 0.58f,
-                            visual.Position +
-                                normal * ray * 0.58f,
-                            rayColor,
-                            0.62f);
-                    }
-                }
-
-                // A compact multi-color nucleus visually binds the four arms.
-                DrawNebulaCloud(
-                    session,
-                    c,
-                    radius * 0.23f,
-                    radius * 0.17f,
-                    WithOpacity(
-                        PaletteColor(0.90f + time * 0.006f, tint),
-                        0.24f));
-                session.FillCircle(
-                    c,
-                    Math.Max(1.2f, particleSize * 0.72f),
-                    Color.FromArgb(210, 245, 250, 255));
-            }
-            finally
-            {
-                session.Blend = savedBlend;
-            }
-        }
-
-        private static void DrawNebulaCloud(
-            CanvasDrawingSession session,
-            Vector2 center,
-            float radiusX,
-            float radiusY,
-            Color centerColor)
-        {
-            Color edge = centerColor;
-            edge.A = 0;
-            using var brush =
-                new CanvasRadialGradientBrush(session, centerColor, edge)
-            {
-                Center = center,
-                RadiusX = radiusX,
-                RadiusY = radiusY,
-            };
-            session.FillEllipse(
-                center,
-                radiusX,
-                radiusY,
-                brush);
-        }
-
         private static Color WithOpacity(Color color, float opacity)
         {
             color.A = (byte)Math.Clamp(
@@ -486,40 +148,6 @@ namespace MouseBeautifier
                 (byte)(from.R + (to.R - from.R) * amount),
                 (byte)(from.G + (to.G - from.G) * amount),
                 (byte)(from.B + (to.B - from.B) * amount));
-        }
-
-        private static Color PaletteColor(float phase, Color tint)
-        {
-            phase -= MathF.Floor(phase);
-            float scaled = phase * NebulaPalette.Length;
-            int first = Math.Min(
-                (int)scaled,
-                NebulaPalette.Length - 1);
-            int second = (first + 1) % NebulaPalette.Length;
-            float amount = scaled - first;
-            // Smooth interpolation prevents visible color bands as particles
-            // slowly travel through the cosmic palette.
-            amount = amount * amount * (3 - 2 * amount);
-            Color color = Blend(
-                NebulaPalette[first],
-                NebulaPalette[second],
-                amount);
-            // Keep the palette variation, but let the user's tint remain the
-            // dominant color so changing the setting is immediately visible.
-            color = Blend(color, tint, 0.72f);
-            color.A = tint.A;
-            return color;
-        }
-
-        private static float Hash01(int value)
-        {
-            uint x = unchecked((uint)value);
-            x ^= x >> 16;
-            x *= 0x7feb352d;
-            x ^= x >> 15;
-            x *= 0x846ca68b;
-            x ^= x >> 16;
-            return (x & 0x00ffffff) / 16777216f;
         }
 
         // ---------- Rope + hanging icon ----------

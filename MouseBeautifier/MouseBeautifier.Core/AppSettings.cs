@@ -33,15 +33,17 @@ namespace MouseBeautifier.Core
         public double GlowSize { get; set; } = 64;
         public double GlowIntensity { get; set; } = 0.5;
 
-        public bool EnableOrbit { get; set; }
-        public int OrbitCount { get; set; } = 56;
-        public double OrbitRadius { get; set; } = 88;
-        public double OrbitSpeed { get; set; } = 26;
-        public double OrbitSize { get; set; } = 2.8;
-        public double OrbitStrokeWidth { get; set; } = 0.8;
-        public string OrbitColor { get; set; } = "#FFA786FF";
+        public NebulaSettings Nebula { get; set; } = new();
 
         public bool StartWithWindows { get; set; }
+        public int SchemaVersion { get; set; } = 2;
+
+        public void Normalize()
+        {
+            Nebula ??= new NebulaSettings();
+            Nebula.Normalize();
+            SchemaVersion = 2;
+        }
 
         public void Reset()
         {
@@ -78,15 +80,10 @@ namespace MouseBeautifier.Core
             GlowSize = defaults.GlowSize;
             GlowIntensity = defaults.GlowIntensity;
 
-            EnableOrbit = defaults.EnableOrbit;
-            OrbitCount = defaults.OrbitCount;
-            OrbitRadius = defaults.OrbitRadius;
-            OrbitSpeed = defaults.OrbitSpeed;
-            OrbitSize = defaults.OrbitSize;
-            OrbitStrokeWidth = defaults.OrbitStrokeWidth;
-            OrbitColor = defaults.OrbitColor;
+            Nebula = defaults.Nebula;
 
             StartWithWindows = defaults.StartWithWindows;
+            SchemaVersion = defaults.SchemaVersion;
         }
     }
 }

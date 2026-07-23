@@ -221,13 +221,17 @@ namespace MouseBeautifier
                         new Vector2(click.X, click.Y));
                 }
 
+                AppSettings settings = _settingsService.Current;
                 _world.AdvanceFrame(
                     elapsed,
                     timestamp,
                     cursor,
-                    _settingsService.Current);
+                    settings);
                 EffectFrameSnapshot frame =
                     _world.CaptureSnapshot(cursor);
+                NebulaRenderSettings nebula =
+                    (settings.Nebula ?? new NebulaSettings())
+                        .ToRenderSettings();
 
                 bool refreshTopmost = ++_topmostCounter >= 120;
                 if (refreshTopmost)
@@ -240,7 +244,10 @@ namespace MouseBeautifier
                 {
                     try
                     {
-                        surface.Render(frame, refreshTopmost);
+                        surface.Render(
+                            frame,
+                            nebula,
+                            refreshTopmost);
                     }
                     catch (Exception ex) when (
                         _device?.IsDeviceLost(ex.HResult) == true)
@@ -666,6 +673,7 @@ namespace MouseBeautifier
 
             internal void Render(
                 in EffectFrameSnapshot frame,
+                in NebulaRenderSettings nebula,
                 bool refreshTopmost)
             {
                 if (_disposed ||
@@ -685,7 +693,7 @@ namespace MouseBeautifier
                                 _bounds,
                                 _dpiX,
                                 _dpiY);
-                    _renderer.Render(session, frame);
+                    _renderer.Render(session, frame, nebula);
                 }
 
                 _target.GetPixelBytes(_dib.PixelBuffer);

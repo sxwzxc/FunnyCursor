@@ -1,4 +1,5 @@
 using Microsoft.UI.Windowing;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
@@ -20,10 +21,12 @@ namespace MouseBeautifier
         private const int InitialWindowWidthDips = 980;
         private const int InitialWindowHeightDips = 820;
         private readonly ISettingsService _settingsService;
+        private readonly DispatcherQueueTimer _saveTimer;
         private AppWindow? _appWindow;
         private IntPtr _windowHandle;
         private bool _enforcingMinimumSize;
         private bool _loading = true;
+        private bool _savePending;
 
         public event Action? ExitRequested;
 
@@ -32,6 +35,10 @@ namespace MouseBeautifier
             _settingsService = settingsService ??
                 throw new ArgumentNullException(nameof(settingsService));
             InitializeComponent();
+            _saveTimer = DispatcherQueue.CreateTimer();
+            _saveTimer.Interval = TimeSpan.FromMilliseconds(250);
+            _saveTimer.IsRepeating = false;
+            _saveTimer.Tick += SaveTimer_Tick;
             SettingsNavigation.SelectedItem = SettingsNavigation.MenuItems[0];
             ShowSettingsSection("ClickEffects");
             ConfigureWindow();
@@ -118,6 +125,9 @@ namespace MouseBeautifier
             WindowEventArgs args)
         {
             Closed -= SettingsWindow_Closed;
+            _saveTimer.Stop();
+            _saveTimer.Tick -= SaveTimer_Tick;
+            SavePendingSettings();
             if (_appWindow != null)
             {
                 _appWindow.Changed -= AppWindow_Changed;
@@ -161,13 +171,37 @@ namespace MouseBeautifier
                 TrailLengthSlider.Value = s.TrailLength;
                 TrailWidthSlider.Value = s.TrailWidth;
 
-                EnableOrbitToggle.IsOn = s.EnableOrbit;
-                OrbitCountSlider.Value = s.OrbitCount;
-                OrbitRadiusSlider.Value = s.OrbitRadius;
-                OrbitSpeedSlider.Value = s.OrbitSpeed;
-                OrbitSizeSlider.Value = s.OrbitSize;
-                OrbitStrokeWidthSlider.Value = s.OrbitStrokeWidth;
-                SetColor(OrbitColorText, OrbitColorPicker, s.OrbitColor);
+                NebulaSettings nebula =
+                    s.Nebula ??= new NebulaSettings();
+                EnableOrbitToggle.IsOn = nebula.Enabled;
+                OrbitCountSlider.Value = nebula.ParticleCount;
+                OrbitRadiusSlider.Value = nebula.Radius;
+                OrbitSpeedSlider.Value = nebula.AngularSpeed;
+                OrbitStarSizeSlider.Value = nebula.StarSize;
+                SetRgbColor(
+                    OrbitParticleColorText,
+                    OrbitParticleColorPicker,
+                    nebula.ParticleColor);
+                OrbitParticleOpacitySlider.Value =
+                    nebula.ParticleOpacity;
+                SetRgbColor(
+                    OrbitCloudColorText,
+                    OrbitCloudColorPicker,
+                    nebula.CloudColor);
+                OrbitCloudOpacitySlider.Value = nebula.CloudOpacity;
+                OrbitTrailOpacitySlider.Value = nebula.TrailOpacity;
+                SetRgbColor(
+                    OrbitStrokeColorText,
+                    OrbitStrokeColorPicker,
+                    nebula.StrokeColor);
+                OrbitStrokeWidthSlider.Value = nebula.StrokeWidth;
+                OrbitStrokeOpacitySlider.Value = nebula.StrokeOpacity;
+                SetRgbColor(
+                    OrbitHaloColorText,
+                    OrbitHaloColorPicker,
+                    nebula.HaloColor);
+                OrbitHaloOpacitySlider.Value = nebula.HaloOpacity;
+                OrbitHaloSizeSlider.Value = nebula.HaloSize;
 
                 EnableGlowToggle.IsOn = s.EnableGlow;
                 SetColor(GlowColorText, GlowColorPicker, s.GlowColor);
@@ -214,17 +248,50 @@ namespace MouseBeautifier
             picker.Color = color;
         }
 
-        private static string NormalizeColor(TextBox textBox)
+        private static void SetRgbColor(
+            TextBox textBox,
+            ColorPicker picker,
+            string value)
+        {
+            Color color = ColorsUtil.Parse(value);
+            color.A = 255;
+            textBox.Text = ToRgbHex(color);
+            picker.Color = color;
+        }
+
+        private static string NormalizeColor(
+            TextBox textBox,
+            ColorPicker picker)
         {
             Color color = ColorsUtil.Parse(textBox.Text);
             string normalized = ToHex(color);
             textBox.Text = normalized;
+            picker.Color = color;
+            return normalized;
+        }
+
+        private static string NormalizeRgbColor(
+            TextBox textBox,
+            ColorPicker picker)
+        {
+            string normalized = HexColor.NormalizeRgb(
+                textBox.Text,
+                ToRgbHex(picker.Color));
+            Color color = ColorsUtil.Parse(normalized);
+            color.A = 255;
+            textBox.Text = normalized;
+            picker.Color = color;
             return normalized;
         }
 
         private static string ToHex(Color color)
         {
             return $"#{color.A:X2}{color.R:X2}{color.G:X2}{color.B:X2}";
+        }
+
+        private static string ToRgbHex(Color color)
+        {
+            return $"#{color.R:X2}{color.G:X2}{color.B:X2}";
         }
 
         private void SettingsNavigation_SelectionChanged(
@@ -262,7 +329,9 @@ namespace MouseBeautifier
 
             s.EnableClickEffects = EnableClickEffectsToggle.IsOn;
             s.ClickPreset = GetComboValue(ClickPresetCombo, "sparkle");
-            s.ClickColor = NormalizeColor(ClickColorText);
+            s.ClickColor = NormalizeColor(
+                ClickColorText,
+                ClickColorPicker);
             s.ClickParticleCount = (int)Math.Round(ClickParticleCountSlider.Value);
             s.ClickSpeed = ClickSpeedSlider.Value;
             s.ClickGravity = ClickGravitySlider.Value;
@@ -277,29 +346,85 @@ namespace MouseBeautifier
             s.RopeStyle = GetComboValue(RopeStyleCombo, "neon");
             s.IconType = GetComboValue(IconTypeCombo, "star");
             s.IconSize = IconSizeSlider.Value;
-            s.IconColor = NormalizeColor(IconColorText);
-            s.RopeColor = NormalizeColor(RopeColorText);
+            s.IconColor = NormalizeColor(
+                IconColorText,
+                IconColorPicker);
+            s.RopeColor = NormalizeColor(
+                RopeColorText,
+                RopeColorPicker);
             s.CustomIconPath = CustomIconPathText.Text.Trim();
 
             s.EnableTrail = EnableTrailToggle.IsOn;
-            s.TrailColor = NormalizeColor(TrailColorText);
+            s.TrailColor = NormalizeColor(
+                TrailColorText,
+                TrailColorPicker);
             s.TrailLength = TrailLengthSlider.Value;
             s.TrailWidth = TrailWidthSlider.Value;
 
-            s.EnableOrbit = EnableOrbitToggle.IsOn;
-            s.OrbitCount = (int)Math.Round(OrbitCountSlider.Value);
-            s.OrbitRadius = OrbitRadiusSlider.Value;
-            s.OrbitSpeed = OrbitSpeedSlider.Value;
-            s.OrbitSize = OrbitSizeSlider.Value;
-            s.OrbitStrokeWidth = OrbitStrokeWidthSlider.Value;
-            s.OrbitColor = NormalizeColor(OrbitColorText);
+            NebulaSettings nebula =
+                s.Nebula ??= new NebulaSettings();
+            nebula.Enabled = EnableOrbitToggle.IsOn;
+            nebula.ParticleCount =
+                (int)Math.Round(OrbitCountSlider.Value);
+            nebula.Radius = OrbitRadiusSlider.Value;
+            nebula.AngularSpeed = OrbitSpeedSlider.Value;
+            nebula.StarSize = OrbitStarSizeSlider.Value;
+            nebula.ParticleColor = NormalizeRgbColor(
+                OrbitParticleColorText,
+                OrbitParticleColorPicker);
+            nebula.ParticleOpacity =
+                OrbitParticleOpacitySlider.Value;
+            nebula.CloudColor = NormalizeRgbColor(
+                OrbitCloudColorText,
+                OrbitCloudColorPicker);
+            nebula.CloudOpacity = OrbitCloudOpacitySlider.Value;
+            nebula.TrailOpacity = OrbitTrailOpacitySlider.Value;
+            nebula.StrokeColor = NormalizeRgbColor(
+                OrbitStrokeColorText,
+                OrbitStrokeColorPicker);
+            nebula.StrokeWidth = OrbitStrokeWidthSlider.Value;
+            nebula.StrokeOpacity = OrbitStrokeOpacitySlider.Value;
+            nebula.HaloColor = NormalizeRgbColor(
+                OrbitHaloColorText,
+                OrbitHaloColorPicker);
+            nebula.HaloOpacity = OrbitHaloOpacitySlider.Value;
+            nebula.HaloSize = OrbitHaloSizeSlider.Value;
+            nebula.Normalize();
 
             s.EnableGlow = EnableGlowToggle.IsOn;
-            s.GlowColor = NormalizeColor(GlowColorText);
+            s.GlowColor = NormalizeColor(
+                GlowColorText,
+                GlowColorPicker);
             s.GlowSize = GlowSizeSlider.Value;
             s.GlowIntensity = GlowIntensitySlider.Value;
 
             s.StartWithWindows = StartWithWindowsToggle.IsOn;
+            ScheduleSave();
+        }
+
+        private void ScheduleSave()
+        {
+            _savePending = true;
+            _saveTimer.Stop();
+            _saveTimer.Start();
+        }
+
+        private void SaveTimer_Tick(
+            DispatcherQueueTimer sender,
+            object args)
+        {
+            sender.Stop();
+            SavePendingSettings();
+        }
+
+        private void SavePendingSettings()
+        {
+            if (!_savePending)
+            {
+                return;
+            }
+
+            _savePending = false;
             _settingsService.Save();
         }
 
@@ -331,14 +456,23 @@ namespace MouseBeautifier
                 "IconColor" => IconColorText,
                 "RopeColor" => RopeColorText,
                 "TrailColor" => TrailColorText,
-                "OrbitColor" => OrbitColorText,
+                "OrbitParticleColor" => OrbitParticleColorText,
+                "OrbitCloudColor" => OrbitCloudColorText,
+                "OrbitStrokeColor" => OrbitStrokeColorText,
+                "OrbitHaloColor" => OrbitHaloColorText,
                 "GlowColor" => GlowColorText,
                 _ => null,
             };
 
             if (target != null)
             {
-                target.Text = ToHex(args.NewColor);
+                bool isNebulaRgb =
+                    sender.Tag?.ToString()?.StartsWith(
+                        "Orbit",
+                        StringComparison.Ordinal) == true;
+                target.Text = isNebulaRgb
+                    ? ToRgbHex(args.NewColor)
+                    : ToHex(args.NewColor);
                 CommitSettings();
             }
         }
@@ -372,6 +506,8 @@ namespace MouseBeautifier
 
         private void ResetButton_Click(object sender, RoutedEventArgs e)
         {
+            _saveTimer.Stop();
+            _savePending = false;
             _settingsService.Reset();
             LoadSettings();
         }

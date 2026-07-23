@@ -2,7 +2,6 @@ using Microsoft.Win32;
 using MouseBeautifier.Core;
 using System;
 using System.IO;
-using System.Text.Json;
 
 namespace MouseBeautifier
 {
@@ -33,9 +32,11 @@ namespace MouseBeautifier
                 if (File.Exists(_filePath))
                 {
                     string json = File.ReadAllText(_filePath);
-                    Current =
-                        JsonSerializer.Deserialize<AppSettings>(json) ??
-                        new AppSettings();
+                    Current = AppSettingsJson.Deserialize(json);
+                }
+                else
+                {
+                    Current = new AppSettings();
                 }
             }
             catch (Exception ex)
@@ -44,6 +45,7 @@ namespace MouseBeautifier
                 Current = new AppSettings();
             }
 
+            Current.Normalize();
             ApplyStartupRegistration();
         }
 
@@ -51,16 +53,20 @@ namespace MouseBeautifier
         {
             try
             {
-                Directory.CreateDirectory(
-                    Path.GetDirectoryName(_filePath)!);
+                string? directory = Path.GetDirectoryName(_filePath);
+                if (!string.IsNullOrEmpty(directory))
+                {
+                    Directory.CreateDirectory(directory);
+                }
+
+                string temporaryPath = _filePath + ".tmp";
                 File.WriteAllText(
+                    temporaryPath,
+                    AppSettingsJson.Serialize(Current));
+                File.Move(
+                    temporaryPath,
                     _filePath,
-                    JsonSerializer.Serialize(
-                        Current,
-                        new JsonSerializerOptions
-                        {
-                            WriteIndented = true,
-                        }));
+                    overwrite: true);
             }
             catch (Exception ex)
             {

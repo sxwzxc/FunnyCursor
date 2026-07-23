@@ -355,12 +355,15 @@
                     <StackPanel Padding="0,12,0,4" Spacing="12">
                         <TextBlock
                             Opacity="0.68"
-                            Text="炫彩星尘、彗星尾迹与多层光雾以不同轨道围绕光标流动。"
+                            Text="星尘、云雾、光晕、衍射光线与中心粒子均可独立控制；不透明度表示该层中心或实体的峰值。"
                             TextWrapping="Wrap" />
                         <ToggleSwitch
                             x:Name="EnableOrbitToggle"
                             Header="启用星云环绕"
                             Toggled="SettingChanged" />
+                        <TextBlock
+                            FontWeight="SemiBold"
+                            Text="运动与范围" />
                         <Slider
                             x:Name="OrbitCountSlider"
                             Header="星尘密度"
@@ -383,18 +386,43 @@
                             StepFrequency="1"
                             ValueChanged="SettingChanged" />
                         <Slider
-                            x:Name="OrbitSizeSlider"
-                            Header="发光粒子大小"
+                            x:Name="OrbitStarSizeSlider"
+                            Header="星尘大小（每颗粒子整体半径）"
                             Maximum="12"
                             Minimum="0.5"
                             StepFrequency="0.25"
                             ValueChanged="SettingChanged" />
+                        <TextBlock
+                            FontWeight="SemiBold"
+                            Text="星尘与云雾" />
+                        <Grid ColumnSpacing="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox
+                                x:Name="OrbitParticleColorText"
+                                Header="星尘颜色（#RRGGBB）"
+                                LostFocus="SettingChanged" />
+                            <Button Grid.Column="1" VerticalAlignment="Bottom" Content="选择颜色">
+                                <Button.Flyout>
+                                    <Flyout>
+                                        <ColorPicker
+                                            x:Name="OrbitParticleColorPicker"
+                                            Tag="OrbitParticleColor"
+                                            ColorChanged="ColorPicker_ColorChanged"
+                                            IsAlphaEnabled="False"
+                                            IsColorChannelTextInputVisible="True" />
+                                    </Flyout>
+                                </Button.Flyout>
+                            </Button>
+                        </Grid>
                         <Slider
-                            x:Name="OrbitStrokeWidthSlider"
-                            Header="粒子描边宽度"
-                            Maximum="8"
+                            x:Name="OrbitParticleOpacitySlider"
+                            Header="星尘不透明度"
+                            Maximum="1"
                             Minimum="0"
-                            StepFrequency="0.1"
+                            StepFrequency="0.01"
                             ValueChanged="SettingChanged" />
                         <Grid ColumnSpacing="10">
                             <Grid.ColumnDefinitions>
@@ -402,22 +430,122 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <TextBox
-                                x:Name="OrbitColorText"
-                                Header="星云主色调（自动混合多种颜色）"
+                                x:Name="OrbitCloudColorText"
+                                Header="云雾颜色（#RRGGBB）"
                                 LostFocus="SettingChanged" />
                             <Button Grid.Column="1" VerticalAlignment="Bottom" Content="选择颜色">
                                 <Button.Flyout>
                                     <Flyout>
                                         <ColorPicker
-                                            x:Name="OrbitColorPicker"
-                                            Tag="OrbitColor"
+                                            x:Name="OrbitCloudColorPicker"
+                                            Tag="OrbitCloudColor"
                                             ColorChanged="ColorPicker_ColorChanged"
-                                            IsAlphaEnabled="True"
+                                            IsAlphaEnabled="False"
                                             IsColorChannelTextInputVisible="True" />
                                     </Flyout>
                                 </Button.Flyout>
                             </Button>
                         </Grid>
+                        <Slider
+                            x:Name="OrbitCloudOpacitySlider"
+                            Header="星云云雾不透明度"
+                            Maximum="1"
+                            Minimum="0"
+                            StepFrequency="0.01"
+                            ValueChanged="SettingChanged" />
+                        <Slider
+                            x:Name="OrbitTrailOpacitySlider"
+                            Header="彗星尾迹不透明度"
+                            Maximum="1"
+                            Minimum="0"
+                            StepFrequency="0.01"
+                            ValueChanged="SettingChanged" />
+                        <TextBlock
+                            FontWeight="SemiBold"
+                            Text="星尘描边（中心点边缘的环）" />
+                        <TextBlock
+                            Opacity="0.68"
+                            Text="描边是套在中心点边缘的一圈，位于中心点与外围光晕之间（中心点 → 描边 → 光晕）。宽度为 0 即关闭。"
+                            TextWrapping="Wrap" />
+                        <Grid ColumnSpacing="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox
+                                x:Name="OrbitStrokeColorText"
+                                Header="描边颜色（#RRGGBB）"
+                                LostFocus="SettingChanged" />
+                            <Button Grid.Column="1" VerticalAlignment="Bottom" Content="选择颜色">
+                                <Button.Flyout>
+                                    <Flyout>
+                                        <ColorPicker
+                                            x:Name="OrbitStrokeColorPicker"
+                                            Tag="OrbitStrokeColor"
+                                            ColorChanged="ColorPicker_ColorChanged"
+                                            IsAlphaEnabled="False"
+                                            IsColorChannelTextInputVisible="True" />
+                                    </Flyout>
+                                </Button.Flyout>
+                            </Button>
+                        </Grid>
+                        <Slider
+                            x:Name="OrbitStrokeWidthSlider"
+                            Header="描边宽度"
+                            Maximum="8"
+                            Minimum="0"
+                            StepFrequency="0.1"
+                            ValueChanged="SettingChanged" />
+                        <Slider
+                            x:Name="OrbitStrokeOpacitySlider"
+                            Header="描边不透明度"
+                            Maximum="1"
+                            Minimum="0"
+                            StepFrequency="0.01"
+                            ValueChanged="SettingChanged" />
+                        <TextBlock
+                            FontWeight="SemiBold"
+                            Text="星尘光晕（每颗粒子外围的柔光）" />
+                        <TextBlock
+                            Opacity="0.68"
+                            Text="光晕是环绕每颗星尘的最外层柔和辉光。"
+                            TextWrapping="Wrap" />
+                        <Grid ColumnSpacing="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox
+                                x:Name="OrbitHaloColorText"
+                                Header="光晕颜色（#RRGGBB）"
+                                LostFocus="SettingChanged" />
+                            <Button Grid.Column="1" VerticalAlignment="Bottom" Content="选择颜色">
+                                <Button.Flyout>
+                                    <Flyout>
+                                        <ColorPicker
+                                            x:Name="OrbitHaloColorPicker"
+                                            Tag="OrbitHaloColor"
+                                            ColorChanged="ColorPicker_ColorChanged"
+                                            IsAlphaEnabled="False"
+                                            IsColorChannelTextInputVisible="True" />
+                                    </Flyout>
+                                </Button.Flyout>
+                            </Button>
+                        </Grid>
+                        <Slider
+                            x:Name="OrbitHaloOpacitySlider"
+                            Header="光晕峰值不透明度"
+                            Maximum="1"
+                            Minimum="0"
+                            StepFrequency="0.01"
+                            ValueChanged="SettingChanged" />
+                        <Slider
+                            x:Name="OrbitHaloSizeSlider"
+                            Header="光晕大小"
+                            Maximum="6"
+                            Minimum="0"
+                            StepFrequency="0.05"
+                            ValueChanged="SettingChanged" />
                     </StackPanel>
                 </Expander>
 

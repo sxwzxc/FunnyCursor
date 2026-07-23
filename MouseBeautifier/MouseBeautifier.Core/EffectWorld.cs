@@ -177,12 +177,17 @@ namespace MouseBeautifier.Core
             AppSettings settings)
         {
             AnimationTime += deltaSeconds;
-            if (settings.EnableOrbit)
+            NebulaSettings nebula =
+                settings.Nebula ?? new NebulaSettings();
+            if (nebula.Enabled)
             {
                 OrbitAnimationTime += deltaSeconds;
                 double orbitSpeed =
-                    double.IsFinite(settings.OrbitSpeed)
-                        ? settings.OrbitSpeed
+                    double.IsFinite(nebula.AngularSpeed)
+                        ? Math.Clamp(
+                            nebula.AngularSpeed,
+                            NebulaSettings.MinAngularSpeed,
+                            NebulaSettings.MaxAngularSpeed)
                         : 0;
                 // Keep an unwrapped double-precision phase. Wrapping this
                 // shared angle before applying each star's speed multiplier

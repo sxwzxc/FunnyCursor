@@ -82,9 +82,12 @@ public sealed class SimulationRegressionTests
             EnableClickEffects = false,
             EnableRope = true,
             EnableTrail = false,
-            EnableOrbit = true,
             RopeSegments = 40,
             RopeStiffness = 1,
+            Nebula = new NebulaSettings
+            {
+                Enabled = true,
+            },
         };
         EffectWorld world = new(randomSeed: 42);
 
